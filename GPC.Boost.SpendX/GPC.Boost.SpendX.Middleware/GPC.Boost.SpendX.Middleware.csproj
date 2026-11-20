@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
+    <PackageReference Include="FluentValidation" Version="11.9.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\GPC.Boost.SpendX.Domain\GPC.Boost.SpendX.Domain.csproj" />
+    <ProjectReference Include="..\GPC.Boost.SpendX.Dto\GPC.Boost.SpendX.Dto.csproj" />
+    <ProjectReference Include="..\GPC.Boost.SpendX.Validation\GPC.Boost.SpendX.Validation.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,11 @@
+<Solution>
+  <Project Path="GPC.Boost.SpendX.Api/GPC.Boost.SpendX.Api.csproj" />
+  <Project Path="GPC.Boost.SpendX.Data/GPC.Boost.SpendX.Data.csproj" />
+  <Project Path="GPC.Boost.SpendX.Domain/GPC.Boost.SpendX.Domain.csproj" />
+  <Project Path="GPC.Boost.SpendX.Dto/GPC.Boost.SpendX.Dto.csproj" />
+  <Project Path="GPC.Boost.SpendX.Middleware/GPC.Boost.SpendX.Middleware.csproj" />
+  <Project Path="GPC.Boost.SpendX.Repository/GPC.Boost.SpendX.Repository.csproj" />
+  <Project Path="GPC.Boost.SpendX.Service/GPC.Boost.SpendX.Service.csproj" />
+  <Project Path="GPC.Boost.SpendX.Validation/GPC.Boost.SpendX.Validation.csproj" />
+  <Project Path="GPC.Boost.SpendX.Tests/GPC.Boost.SpendX.Tests.csproj" />
+</Solution>

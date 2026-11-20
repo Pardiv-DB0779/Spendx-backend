@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\GPC.Boost.SpendX.Repository\GPC.Boost.SpendX.Repository.csproj" />
+    <ProjectReference Include="..\GPC.Boost.SpendX.Domain\GPC.Boost.SpendX.Domain.csproj" />
+    <ProjectReference Include="..\GPC.Boost.SpendX.Dto\GPC.Boost.SpendX.Dto.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AutoMapper" Version="13.0.1" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
