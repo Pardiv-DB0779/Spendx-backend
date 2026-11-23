@@ -2,6 +2,7 @@ using System;
 using FluentValidation;
 using GPC.Boost.SpendX.Data;
 using GPC.Boost.SpendX.Dto.RequestDto;
+using GPC.Boost.SpendX.Dto.ResponseDto;
 using GPC.Boost.SpendX.Middleware;
 using GPC.Boost.SpendX.Repository;
 using GPC.Boost.SpendX.Service;
@@ -20,7 +21,6 @@ builder.ConfigureFunctionsWebApplication();
 
 // Register Functions Worker Middlewares
 builder.UseMiddleware<GlobalExceptionMiddleware>();
-builder.UseMiddleware<ValidationMiddleware>();
 
 // Configuration
 var configuration = builder.Configuration;
@@ -44,6 +44,9 @@ builder.Services.AddScoped<ISpendXService, SpendXService>();
 // Register FluentValidation Validators
 builder.Services.AddScoped<IValidator<EventOfferRequestDto>, EventOfferRequestDtoValidator>();
 builder.Services.AddScoped<IValidator<SpendXOverviewRequestDto>, SpendXOverviewRequestDtoValidator>();
+builder.Services.AddScoped<IValidator<DataViewRequestDto>, DataViewRequestDtoValidator>();
+builder.Services.AddScoped<IValidator<DataViewResponseDto>, DataViewResponseDtoValidator>();
+builder.Services.AddScoped<IValidator<SearchByBrandRequestDto>, SearchByBrandRequestDtoValidator>();
 
 // Logging
 builder.Services.AddLogging(logging =>

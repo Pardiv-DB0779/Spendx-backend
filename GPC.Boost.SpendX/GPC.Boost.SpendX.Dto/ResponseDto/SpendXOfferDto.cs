@@ -18,6 +18,7 @@ namespace GPC.Boost.SpendX.Dto.ResponseDto
         public bool IsRewards { get; set; }
         public bool Loyality { get => IsRewards; set => IsRewards = value; }
         public bool Loyalty { get => IsRewards; set => IsRewards = value; }
+        public bool? IsTiered { get; set; }
         public string? RepresentativePartNumber { get; set; }
 
         public decimal Spend1 { get; set; }
@@ -50,6 +51,7 @@ namespace GPC.Boost.SpendX.Dto.ResponseDto
         public bool NotAvailableAllStores { get; set; }
         public bool LimitedStoreStock { get; set; }
         public bool WhileStocksLast { get; set; }
+        public bool WhileStockLast { get => WhileStocksLast; set => WhileStocksLast = value; }
         public bool StoreStockOnly { get; set; }
         public string? ImageReference { get; set; }
         public string? CopyReference { get; set; }
@@ -67,6 +69,7 @@ namespace GPC.Boost.SpendX.Dto.ResponseDto
 
     public class SpendXPricingDto
     {
+        public bool? IsTiered { get; set; }
         public decimal Spend1 { get; set; }
         public decimal SavePct1 { get; set; }
         public decimal? Spend2 { get; set; }

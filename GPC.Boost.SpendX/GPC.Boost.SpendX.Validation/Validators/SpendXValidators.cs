@@ -1,6 +1,7 @@
 using System.Linq;
 using FluentValidation;
 using GPC.Boost.SpendX.Dto.RequestDto;
+using GPC.Boost.SpendX.Dto.ResponseDto;
 
 namespace GPC.Boost.SpendX.Validation.Validators
 {
@@ -32,6 +33,59 @@ namespace GPC.Boost.SpendX.Validation.Validators
                 .NotEmpty()
                 .NotNull()
                 .WithMessage("UserId is required.");
+
+            // SpendX 3-Tier Validation
+            RuleFor(x => x.Spend1)
+                .GreaterThan(0)
+                .WithMessage("Tier 1 Spend threshold must be greater than zero.")
+                .PrecisionScale(18, 2, false);
+
+            RuleFor(x => x.SavePct1)
+                .InclusiveBetween(0.01m, 100m)
+                .WithMessage("Tier 1 Save percentage must be between 0.01% and 100%.")
+                .PrecisionScale(5, 2, false);
+
+            When(x => (x.IsTiered == true) || x.Spend2.HasValue || x.SavePct2.HasValue, () =>
+            {
+                RuleFor(x => x.Spend2)
+                    .NotNull()
+                    .WithMessage("Tier 2 Spend threshold is required when multi-tier is enabled or Tier 2 discount is provided.")
+                    .GreaterThan(x => x.Spend1)
+                    .WithMessage("Tier 2 Spend must be strictly greater than Tier 1 Spend.")
+                    .PrecisionScale(18, 2, false);
+
+                RuleFor(x => x.SavePct2)
+                    .NotNull()
+                    .WithMessage("Tier 2 Save percentage is required when Tier 2 spend threshold is provided.")
+                    .InclusiveBetween(0.01m, 100m)
+                    .WithMessage("Tier 2 Save percentage must be between 0.01% and 100%.")
+                    .GreaterThan(x => x.SavePct1)
+                    .WithMessage("Tier 2 Save percentage must be greater than Tier 1 Save percentage.")
+                    .PrecisionScale(5, 2, false);
+            });
+
+            When(x => x.Spend3.HasValue || x.SavePct3.HasValue, () =>
+            {
+                RuleFor(x => x.Spend2)
+                    .NotNull()
+                    .WithMessage("Tier 2 must be configured before configuring Tier 3.");
+
+                RuleFor(x => x.Spend3)
+                    .NotNull()
+                    .WithMessage("Tier 3 Spend threshold is required when Tier 3 discount is provided.")
+                    .GreaterThan(x => x.Spend2!.Value)
+                    .WithMessage("Tier 3 Spend must be strictly greater than Tier 2 Spend.")
+                    .PrecisionScale(18, 2, false);
+
+                RuleFor(x => x.SavePct3)
+                    .NotNull()
+                    .WithMessage("Tier 3 Save percentage is required when Tier 3 spend threshold is provided.")
+                    .InclusiveBetween(0.01m, 100m)
+                    .WithMessage("Tier 3 Save percentage must be between 0.01% and 100%.")
+                    .GreaterThan(x => x.SavePct2!.Value)
+                    .WithMessage("Tier 3 Save percentage must be greater than Tier 2 Save percentage.")
+                    .PrecisionScale(5, 2, false);
+            });
 
             When(x => x.Details != null && x.Details.Count > 0, () =>
             {
@@ -76,11 +130,11 @@ namespace GPC.Boost.SpendX.Validation.Validators
                     .PrecisionScale(5, 2, false);
             });
 
-            When(x => x.Overview != null && (x.Overview.Spend2.HasValue || x.Overview.SavePct2.HasValue), () =>
+            When(x => x.Overview != null && ((x.Overview.IsTiered == true) || x.Overview.Spend2.HasValue || x.Overview.SavePct2.HasValue), () =>
             {
                 RuleFor(x => x.Overview.Spend2)
                     .NotNull()
-                    .WithMessage("Tier 2 Spend threshold is required when Tier 2 discount is provided.")
+                    .WithMessage("Tier 2 Spend threshold is required when multi-tier is enabled or Tier 2 discount is provided.")
                     .GreaterThan(x => x.Overview.Spend1)
                     .WithMessage("Tier 2 Spend must be strictly greater than Tier 1 Spend.")
                     .PrecisionScale(18, 2, false);
@@ -117,6 +171,67 @@ namespace GPC.Boost.SpendX.Validation.Validators
                     .WithMessage("Tier 3 Save percentage must be greater than Tier 2 Save percentage.")
                     .PrecisionScale(5, 2, false);
             });
+        }
+    }
+
+    public class DataViewRequestDtoValidator : AbstractValidator<DataViewRequestDto>
+    {
+        public DataViewRequestDtoValidator()
+        {
+            RuleFor(x => x.EventId)
+                .GreaterThan(0)
+                .WithMessage("EventId must be greater than zero.");
+
+            RuleFor(x => x.EventOfferId)
+                .GreaterThan(0)
+                .WithMessage("EventOfferId must be greater than zero.");
+
+            RuleFor(x => x.OfferNo)
+                .GreaterThan(0)
+                .WithMessage("OfferNo must be greater than zero.");
+
+            RuleFor(x => x.PageNumber)
+                .GreaterThan(0)
+                .WithMessage("PageNumber must be greater than zero.");
+
+            RuleFor(x => x.PageSize)
+                .GreaterThan(0)
+                .WithMessage("PageSize must be greater than zero.");
+        }
+    }
+
+    public class DataViewResponseDtoValidator : AbstractValidator<DataViewResponseDto>
+    {
+        public DataViewResponseDtoValidator()
+        {
+            RuleFor(x => x.EventId)
+                .GreaterThan(0)
+                .WithMessage("EventId must be greater than zero.");
+
+            RuleFor(x => x.OfferId)
+                .GreaterThan(0)
+                .WithMessage("OfferId must be greater than zero.");
+
+            RuleFor(x => x.EventOfferDataView)
+                .NotNull()
+                .Must(list => list != null && list.Count > 0)
+                .WithMessage("EventOfferDataView list cannot be empty.");
+        }
+    }
+
+    public class SearchByBrandRequestDtoValidator : AbstractValidator<SearchByBrandRequestDto>
+    {
+        public SearchByBrandRequestDtoValidator()
+        {
+            RuleFor(x => x.Brand)
+                .NotEmpty()
+                .NotNull()
+                .WithMessage("Brand query parameter is required.");
+
+            RuleFor(x => x.Country)
+                .NotEmpty()
+                .NotNull()
+                .WithMessage("Country is required.");
         }
     }
 }

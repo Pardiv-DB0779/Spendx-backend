@@ -9,37 +9,16 @@ namespace GPC.Boost.SpendX.Data
         {
         }
 
-        public virtual DbSet<TOfferType> TOfferTypes { get; set; }
         public virtual DbSet<TEventOffer> TEventOffers { get; set; }
         public virtual DbSet<TEventOfferDetail> TEventOfferDetails { get; set; }
         public virtual DbSet<TProduct> TProducts { get; set; }
         public virtual DbSet<TMudMap> TMudMaps { get; set; }
+        public virtual DbSet<TEventOfferSearchHistory> TEventOfferSearchHistories { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             // ------------------------------------------------------------------
-            // 1. TOfferType -> tOfferType
-            // ------------------------------------------------------------------
-            modelBuilder.Entity<TOfferType>(entity =>
-            {
-                entity.ToTable("tOfferType");
-                entity.HasKey(e => new { e.OfferTypeId, e.Country }).HasName("pk_toffertype");
-
-                entity.Property(e => e.OfferTypeId).HasColumnName("offerTypeId");
-                entity.Property(e => e.Country).HasMaxLength(10).HasColumnName("country");
-                entity.Property(e => e.OfferType).HasMaxLength(100).HasColumnName("offerType");
-                entity.Property(e => e.HybrisDefaultPillText).HasMaxLength(100).HasColumnName("hybrisDefaultPillText");
-                entity.Property(e => e.HybrisDefaultStickerText).HasMaxLength(100).HasColumnName("hybrisDefaultStickerText");
-                entity.Property(e => e.AggregateType).HasColumnName("aggregateType");
-                entity.Property(e => e.AmountThresholdShareUse).HasColumnName("amountThresholdShareUse");
-                entity.Property(e => e.HybrisTargetGroupUse).HasColumnName("hybrisTargetGroupUse");
-                entity.Property(e => e.AggregateTypeOverride).HasColumnName("AggregateTypeOverride");
-                entity.Property(e => e.ReplaceImageCopyIndicator).HasColumnName("ReplaceImageCopyIndicator");
-                entity.Property(e => e.MaximumSkuCount).HasColumnName("maximumSkuCount");
-            });
-
-            // ------------------------------------------------------------------
-            // 2. TProduct -> tproducts
+            // 1. TProduct -> tproducts
             // ------------------------------------------------------------------
             modelBuilder.Entity<TProduct>(entity =>
             {
@@ -237,6 +216,7 @@ namespace GPC.Boost.SpendX.Data
                 entity.Property(e => e.IncrementalSales).HasPrecision(19, 5).HasColumnName("incrementalSales");
                 entity.Property(e => e.IncrementalTradeDollar).HasPrecision(19, 5).HasColumnName("incrementalTradeDollar");
 
+                entity.Property(e => e.ScanSupportDollar).HasPrecision(19, 5).HasColumnName("scanSupport$");
                 entity.Property(e => e.ScanSupportValue).HasPrecision(19, 5).HasColumnName("scanSupportValue");
                 entity.Property(e => e.ScanSupportPercent).HasPrecision(19, 5).HasColumnName("scanSupportPercent");
                 entity.Property(e => e.LeCost).HasPrecision(19, 5).HasColumnName("leCost");
@@ -318,6 +298,28 @@ namespace GPC.Boost.SpendX.Data
 
                 entity.HasIndex(e => e.OfferId, "idx_tmudmap_offerId");
                 entity.HasIndex(e => new { e.EventId, e.PageId, e.PositionId }, "idx_tmudmap_event_page_pos");
+            });
+
+            // ------------------------------------------------------------------
+            // 6. TEventOfferSearchHistory -> tEventOfferSearchHistory
+            // ------------------------------------------------------------------
+            modelBuilder.Entity<TEventOfferSearchHistory>(entity =>
+            {
+                entity.ToTable("tEventOfferSearchHistory");
+                entity.HasKey(e => e.Id).HasName("tEventOfferSearchHistory_pkey");
+
+                entity.Property(e => e.Id).HasColumnName("id");
+                entity.Property(e => e.EventId).HasColumnName("eventId");
+                entity.Property(e => e.PageId).HasColumnName("pageId");
+                entity.Property(e => e.PositionId).HasColumnName("positionId");
+                entity.Property(e => e.EventOfferId).HasColumnName("eventOfferId");
+                entity.Property(e => e.OfferNumber).HasColumnName("offerNumber");
+                entity.Property(e => e.SearchJson).HasColumnType("jsonb").HasColumnName("searchJson");
+                entity.Property(e => e.UserId).HasMaxLength(100).HasColumnName("userId");
+                entity.Property(e => e.Country).HasMaxLength(10).HasColumnName("country");
+                entity.Property(e => e.SearchedAt).HasColumnType("timestamp without time zone").HasColumnName("searchedAt");
+
+                entity.HasIndex(e => new { e.EventId, e.PageId, e.PositionId }, "idx_teventoffersearchhistory");
             });
         }
     }

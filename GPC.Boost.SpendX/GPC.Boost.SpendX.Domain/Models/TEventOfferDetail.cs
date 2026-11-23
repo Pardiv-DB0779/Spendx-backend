@@ -43,6 +43,7 @@ namespace GPC.Boost.SpendX.Domain.Models
         public decimal? IncrementalTradeDollar { get; set; }
 
         // Vendor Scan Support & Costs
+        public decimal? ScanSupportDollar { get; set; }
         public decimal? ScanSupportValue { get; set; }
         public decimal? ScanSupportPercent { get; set; }
         public decimal? LeCost { get; set; }
@@ -67,6 +68,7 @@ namespace GPC.Boost.SpendX.Domain.Models
         public bool? IsSkuActive { get; set; } = true;
         public bool? IsSkuEdited { get; set; } = false;
         public bool? DisplayIndicator { get; set; } = true;
+        public bool? IsCategoryForecastLocked { get; set; } = false;
 
         // Store Group Allocations & TieUp
         public int? G0 { get; set; }

@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\GPC.Boost.SpendX.Data\GPC.Boost.SpendX.Data.csproj" />
     <ProjectReference Include="..\GPC.Boost.SpendX.Domain\GPC.Boost.SpendX.Domain.csproj" />
+    <ProjectReference Include="..\GPC.Boost.SpendX.Dto\GPC.Boost.SpendX.Dto.csproj" />
   </ItemGroup>
 
   <ItemGroup>

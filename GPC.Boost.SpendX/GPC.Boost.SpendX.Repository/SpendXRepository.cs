@@ -4,8 +4,12 @@ using System.Linq;
 using System.Threading.Tasks;
 using GPC.Boost.SpendX.Data;
 using GPC.Boost.SpendX.Domain.Models;
+using GPC.Boost.SpendX.Dto.RequestDto;
+using GPC.Boost.SpendX.Dto.ResponseDto;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace GPC.Boost.SpendX.Repository
 {
@@ -17,6 +21,14 @@ namespace GPC.Boost.SpendX.Repository
         Task<TEventOffer?> GetOfferByPositionAsync(int eventId, int pageId, int positionId);
         Task<List<TEventOfferDetail>> GetOfferDetailsAsync(int offerId, int offerNo = 1);
         Task<bool> UpdateOfferHeaderOverviewAsync(TEventOffer offer);
+        Task<bool> AddEventOfferSearchHistoryAsync(TEventOfferSearchHistory searchHistory);
+        Task<TEventOfferSearchHistory?> GetEventOfferSearchHistoryAsync(int eventId, int pageId, int positionId, int offerId, int offerNumber);
+        Task<bool> UpdateEventOfferSearchHistoryAsync(TEventOfferSearchHistory searchHistory);
+        Task<(List<OfferSkuOverviewDto> Items, int TotalCount)> GetDataViewAsync(DataViewRequestDto request);
+        Task<bool> UpdateOfferDetailsRangeAsync(List<TEventOfferDetail> details);
+        Task<bool> SaveDataViewDetailsAndRecalculateHeaderAsync(List<TEventOfferDetail> details, int offerId, int offerNo, int offerTypeId);
+        Task<bool> CalculateDataViewAsync(DataViewRequestDto request);
+        Task<bool> CalculateEventOfferHeaderAsync(int offerId, int offerNo, int offerTypeId);
     }
 
     public class SpendXRepository : ISpendXRepository
@@ -58,12 +70,10 @@ namespace GPC.Boost.SpendX.Repository
                 {
                     _context.TEventOffers.Update(offer);
 
-                    // Replace details or update
-                    var existingDetails = await _context.TEventOfferDetails
+                    // Execute direct delete to avoid EF tracking collisions
+                    await _context.TEventOfferDetails
                         .Where(d => d.OfferId == offer.OfferId && d.OfferNo == offer.OfferNumber)
-                        .ToListAsync();
-                    _context.TEventOfferDetails.RemoveRange(existingDetails);
-                    await _context.SaveChangesAsync();
+                        .ExecuteDeleteAsync();
                 }
                 else
                 {
@@ -103,20 +113,15 @@ namespace GPC.Boost.SpendX.Repository
                     mudMap.IsReserved = true;
                 }
 
-                mudMap.OfferId = offer.OfferId;
-                mudMap.OfferNumber = offer.OfferNumber;
-                mudMap.OfferName = offer.OfferName;
-                mudMap.OfferType = offer.OfferType;
-                mudMap.Brand = offer.Brand;
-                mudMap.Loyalty = offer.IsRewards ?? false;
-                mudMap.SavePercent = offer.SavePct1;
-                mudMap.UpdatedAt = DateTime.UtcNow;
+                SyncMudMapFromOffer(mudMap, offer);
 
                 await _context.SaveChangesAsync();
 
-                // Recalculate header rollup
-                decimal gst = offer.Country.ToUpper() == "NZ" ? 0.15m : 0.10m;
-                await RecalculateOfferHeaderInternalAsync(offer.OfferId, offer.OfferNumber, gst);
+                // Recalculate header rollup via stored procedure inside transaction to ensure consistency
+                if (details != null && details.Any())
+                {
+                    await CalculateEventOfferHeaderAsync(offer.OfferId, offer.OfferNumber, offer.OfferTypeId);
+                }
 
                 await tx.CommitAsync();
                 return (true, offer.OfferId);
@@ -149,114 +154,6 @@ namespace GPC.Boost.SpendX.Repository
                 .ToListAsync();
         }
 
-        private async Task<bool> RecalculateOfferHeaderInternalAsync(int offerId, int offerNo, decimal gst)
-        {
-            try
-            {
-                var offer = await _context.TEventOffers.FirstOrDefaultAsync(o => o.OfferId == offerId && o.OfferNumber == offerNo);
-                if (offer == null) return false;
-
-                var details = await _context.TEventOfferDetails
-                    .Where(d => d.OfferId == offerId && d.OfferNo == offerNo && (d.IsSkuActive == true || d.IsSkuActive == null))
-                    .ToListAsync();
-
-                if (!details.Any()) return true;
-
-                // BRD Item 1: Calculate Advertised Price based on highest nominal tier discount %
-                decimal maxDiscountPct = Math.Max(offer.SavePct1, Math.Max(offer.SavePct2 ?? 0m, offer.SavePct3 ?? 0m));
-                if (maxDiscountPct > 0)
-                {
-                    foreach (var d in details)
-                    {
-                        if (d.EverydayPrice.HasValue && d.EverydayPrice.Value > 0)
-                        {
-                            d.AdvertisedPrice = Math.Round(d.EverydayPrice.Value * (1m - (maxDiscountPct / 100m)), 2);
-                            d.AdvertisedPriceGst = d.EverydayPriceGst.HasValue 
-                                ? Math.Round(d.EverydayPriceGst.Value * (1m - (maxDiscountPct / 100m)), 2) 
-                                : Math.Round(d.AdvertisedPrice.Value * (1 + gst), 2);
-                            d.CalculatedSavePercentage = maxDiscountPct;
-                            d.CalculatedSaveValue = Math.Round(d.EverydayPrice.Value - d.AdvertisedPrice.Value, 2);
-                            d.ExtendedAdvertisedPrice = Math.Round((d.ForecastUnits ?? 0) * d.AdvertisedPrice.Value, 2);
-
-                            decimal cost = d.NationalAverageCost ?? d.LeCost ?? 0m;
-                            d.ForecastSales = Math.Round((d.ForecastUnits ?? 0) * d.AdvertisedPrice.Value, 2);
-                            d.ForecastCost = Math.Round((d.ForecastUnits ?? 0) * cost, 2);
-                            d.ForecastTradeMarginDollar = Math.Round((d.ForecastSales ?? 0) - (d.ForecastCost ?? 0), 2);
-                            d.ForecastTradeMarginPercent = (d.ForecastSales ?? 0) > 0 ? Math.Round(((d.ForecastTradeMarginDollar ?? 0) / d.ForecastSales!.Value) * 100, 2) : 0m;
-
-                            decimal incUnits = d.IncrementalForecast ?? 0;
-                            d.IncrementalSales = Math.Round(incUnits * d.AdvertisedPrice.Value, 2);
-                            d.IncrementalTradeDollar = Math.Round(incUnits * (d.AdvertisedPrice.Value - cost), 2);
-                        }
-                    }
-                }
-
-                offer.EverydayUnits = details.Sum(d => d.EverydayUnits ?? 0);
-                offer.ForecastUnits = (int)Math.Round(details.Sum(d => d.ForecastUnits ?? 0));
-                offer.IncrementalUnits = offer.ForecastUnits - (int)Math.Round(offer.EverydayUnits ?? 0);
-
-                offer.ForecastCost = Math.Round(details.Sum(d => d.ForecastCost ?? 0), 2);
-                offer.ForecastSales = Math.Round(details.Sum(d => d.ForecastSales ?? 0), 2);
-
-                // TotalSupplierIncome = SpacePurchase + TotalScanSupport (BRD Item 2)
-                decimal scanSupportTotal = details.Sum(d => (d.ScanSupportValue ?? 0) * (d.ForecastUnits ?? 0));
-                offer.TotalScanSupportDollar = Math.Round(scanSupportTotal, 2);
-                offer.TotalSupplierIncome = Math.Round((offer.SpacePurchase ?? 0) + scanSupportTotal, 2);
-
-                // ForecastTradeMargin$ = (ForecastSales - ForecastCost) + TotalSupplierIncome (BRD Item 2)
-                decimal productMargin = (offer.ForecastSales ?? 0) - (offer.ForecastCost ?? 0);
-                offer.ForecastTradeMargin = Math.Round(productMargin + (offer.TotalSupplierIncome ?? 0), 2);
-                offer.ForecastTradeMarginDollar = offer.ForecastTradeMargin;
-
-                if (offer.ForecastSales > 0)
-                {
-                    offer.ForecastTmPercent = Math.Round(((offer.ForecastTradeMargin ?? 0) / (offer.ForecastSales ?? 1)) * 100, 2);
-                    offer.ForecastTradeMarginPercent = offer.ForecastTmPercent;
-                }
-
-                offer.IncrementalSales = details.Sum(d => d.IncrementalSales ?? 0);
-                offer.IncrementalSalesDollar = offer.IncrementalSales;
-                offer.IncrementalTm = details.Sum(d => d.IncrementalTradeDollar ?? 0);
-                offer.IncrementalTmDollar = offer.IncrementalTm;
-
-                var firstDetail = details.FirstOrDefault(d => d.AdvertisedPrice.HasValue && d.AdvertisedPrice.Value > 0) ?? details.FirstOrDefault();
-                if (firstDetail != null)
-                {
-                    offer.EverydayPrice = firstDetail.EverydayPrice;
-                    offer.EverydayPriceGst = firstDetail.EverydayPriceGst;
-                    offer.AdvertisedPrice = firstDetail.AdvertisedPrice;
-                    offer.AdvertisedPriceGst = firstDetail.AdvertisedPriceGst;
-                    offer.SaveValue = firstDetail.CalculatedSaveValue;
-                    offer.SavePercent = offer.SavePct1;
-                    offer.CalculatedSavePercent = firstDetail.CalculatedSavePercentage;
-                    offer.CalculatedSaveValue = firstDetail.CalculatedSaveValue;
-                }
-
-                offer.UpdatedAt = DateTime.UtcNow;
-
-                // Also keep tmudmap pricing synchronized
-                var mudMap = await _context.TMudMaps
-                    .FirstOrDefaultAsync(m => m.EventId == offer.EventId && m.PageId == offer.Page && m.PositionId == offer.PagePosition);
-                if (mudMap != null)
-                {
-                    mudMap.EverydayPrice = offer.EverydayPrice;
-                    mudMap.AdvertisedPrice = offer.AdvertisedPrice;
-                    mudMap.SaveValue = offer.SaveValue;
-                    mudMap.SavePercent = offer.SavePct1;
-                    mudMap.Loyalty = offer.IsRewards ?? false;
-                    mudMap.UpdatedAt = DateTime.UtcNow;
-                }
-
-                await _context.SaveChangesAsync();
-                return true;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in RecalculateOfferHeaderInternalAsync: {Message}", ex.Message);
-                return false;
-            }
-        }
-
         public async Task<bool> UpdateOfferHeaderOverviewAsync(TEventOffer offer)
         {
             try
@@ -268,23 +165,13 @@ namespace GPC.Boost.SpendX.Repository
 
                 if (mudMap != null)
                 {
-                    mudMap.OfferName = offer.OfferName;
-                    mudMap.OfferType = offer.OfferType;
-                    mudMap.Brand = offer.Brand;
-                    mudMap.Clearance = offer.IsClearance ?? false;
-                    mudMap.New = offer.IsNew ?? false;
-                    mudMap.Loyalty = offer.IsRewards ?? false;
-                    mudMap.OfferId = offer.OfferId;
-                    mudMap.OfferNumber = offer.OfferNumber;
-                    mudMap.SavePercent = offer.SavePct1;
-                    mudMap.UpdatedAt = DateTime.UtcNow;
+                    SyncMudMapFromOffer(mudMap, offer);
                 }
 
                 await _context.SaveChangesAsync();
 
-                // Recalculate header financials in case SpacePurchase or Tier discounts changed (Item 2 & 7)
-                decimal gst = offer.Country.ToUpper() == "NZ" ? 0.15m : 0.10m;
-                await RecalculateOfferHeaderInternalAsync(offer.OfferId, offer.OfferNumber, gst);
+                // Recalculate header financials via stored procedure (BRD Items 2 & 7)
+                await CalculateEventOfferHeaderAsync(offer.OfferId, offer.OfferNumber, offer.OfferTypeId);
 
                 return true;
             }
@@ -292,6 +179,270 @@ namespace GPC.Boost.SpendX.Repository
             {
                 _logger.LogError(ex, "Failed to update offer overview: {Message}", ex.Message);
                 return false;
+            }
+        }
+
+        private static void SyncMudMapFromOffer(TMudMap mudMap, TEventOffer offer)
+        {
+            mudMap.OfferId = offer.OfferId;
+            mudMap.OfferNumber = offer.OfferNumber;
+            mudMap.OfferName = offer.OfferName;
+            mudMap.OfferType = offer.OfferType;
+            mudMap.Brand = offer.Brand;
+            mudMap.Loyalty = offer.IsRewards ?? false;
+            mudMap.SavePercent = offer.SavePct1;
+            mudMap.Clearance = offer.IsClearance ?? false;
+            mudMap.New = offer.IsNew ?? false;
+            mudMap.EverydayPrice = offer.EverydayPrice;
+            mudMap.AdvertisedPrice = offer.AdvertisedPrice;
+            mudMap.SaveValue = offer.SaveValue;
+            mudMap.UpdatedAt = DateTime.UtcNow;
+        }
+
+        public async Task<bool> AddEventOfferSearchHistoryAsync(TEventOfferSearchHistory searchHistory)
+        {
+            await _context.TEventOfferSearchHistories.AddAsync(searchHistory);
+            var result = await _context.SaveChangesAsync();
+            return result > 0;
+        }
+
+        public async Task<TEventOfferSearchHistory?> GetEventOfferSearchHistoryAsync(int eventId, int pageId, int positionId, int offerId, int offerNumber)
+        {
+            return await _context.TEventOfferSearchHistories
+                .Where(e => e.EventId == eventId && e.PageId == pageId && e.PositionId == positionId && e.EventOfferId == offerId && e.OfferNumber == offerNumber)
+                .OrderByDescending(e => e.SearchedAt)
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<bool> UpdateEventOfferSearchHistoryAsync(TEventOfferSearchHistory searchHistory)
+        {
+            _context.TEventOfferSearchHistories.Update(searchHistory);
+            var result = await _context.SaveChangesAsync();
+            return result > 0;
+        }
+
+        public async Task<(List<OfferSkuOverviewDto> Items, int TotalCount)> GetDataViewAsync(DataViewRequestDto request)
+        {
+            var query = _context.TEventOfferDetails
+                .Where(d => d.OfferId == request.EventOfferId && d.OfferNo == request.OfferNo && (d.IsSkuActive == true || d.IsSkuActive == null));
+
+            if (request.SKUs != null && request.SKUs.Any())
+            {
+                var upperSkus = request.SKUs.Select(s => s.Trim().ToUpper()).ToList();
+                query = query.Where(d => upperSkus.Contains(d.Sku.ToUpper()));
+            }
+
+            if (request.Brands != null && request.Brands.Any())
+            {
+                var upperBrands = request.Brands.Select(b => b.Trim().ToUpper()).ToList();
+                query = query.Where(d => d.Brand != null && upperBrands.Contains(d.Brand.ToUpper()));
+            }
+
+            if (request.PartNumbers != null && request.PartNumbers.Any())
+            {
+                var upperParts = request.PartNumbers.Select(p => p.Trim().ToUpper()).ToList();
+                query = query.Where(d => d.PartNo != null && upperParts.Contains(d.PartNo.ToUpper()));
+            }
+
+            if (request.Descriptions != null && request.Descriptions.Any())
+            {
+                query = query.Where(d => d.Description != null && request.Descriptions.Any(desc => d.Description.Contains(desc)));
+            }
+
+            if (request.SortOnEdPriceDesc.HasValue)
+            {
+                query = request.SortOnEdPriceDesc.Value
+                    ? query.OrderByDescending(d => d.EverydayPrice).ThenBy(d => d.Sku)
+                    : query.OrderBy(d => d.EverydayPrice).ThenBy(d => d.Sku);
+            }
+            else if (request.SortOnCatFcstDesc.HasValue)
+            {
+                query = request.SortOnCatFcstDesc.Value
+                    ? query.OrderByDescending(d => d.Categoryforecast).ThenBy(d => d.Sku)
+                    : query.OrderBy(d => d.Categoryforecast).ThenBy(d => d.Sku);
+            }
+            else
+            {
+                query = query.OrderBy(d => d.Sku);
+            }
+
+            int totalCount = await query.CountAsync();
+            int pageSize = request.PageSize > 0 ? request.PageSize : 100;
+            int pageNumber = request.PageNumber > 0 ? request.PageNumber : 1;
+
+            var details = await query
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            var items = details.Select(d => new OfferSkuOverviewDto
+            {
+                Sku = d.Sku,
+                PartNumber = d.PartNo ?? d.Sku,
+                Brand = d.Brand ?? string.Empty,
+                Description = d.Description ?? string.Empty,
+                EdPrice = d.EverydayPrice ?? 0m,
+                EdPriceGst = d.EverydayPriceGst ?? 0m,
+                LeCost = d.LeCost ?? 0m,
+                NatAvgCost = d.NationalAverageCost ?? 0m,
+                CatFcst = d.Categoryforecast ?? 0,
+                IncrFcst = d.IncrementalForecast ?? 0,
+                EdUnits = d.EverydayUnits ?? 0m,
+                FcstCost = d.ForecastCost ?? 0m,
+                FcstSales = d.ForecastSales ?? 0m,
+                FcstTmValue = d.ForecastTradeMarginDollar ?? 0m,
+                FcstTmPercent = d.ForecastTradeMarginPercent ?? 0m,
+                SohStore = (int)(d.StockOnHandStore ?? 0m),
+                SohDc = (int)(d.StockOnHandDc ?? 0m),
+                TotalTieUp = d.TotalTieUp ?? 0,
+                TieUpCost = d.TieUpCost ?? 0m,
+                ScanSupportValue = d.ScanSupportValue ?? 0m,
+                ScanSupportPercent = d.ScanSupportPercent ?? 0m,
+                DisplayInd = d.DisplayIndicator ?? true,
+                Clearance = d.ClearanceIndicator,
+                Showroom = d.ShowroomIndicator,
+                isCatFcstLocked = d.IsCategoryForecastLocked,
+                isSkuEdited = d.IsSkuEdited,
+                isSkuActive = d.IsSkuActive
+            }).ToList();
+
+            return (items, totalCount);
+        }
+
+        public async Task<bool> UpdateOfferDetailsRangeAsync(List<TEventOfferDetail> details)
+        {
+            if (details == null || !details.Any()) return true;
+            _context.TEventOfferDetails.UpdateRange(details);
+            return await _context.SaveChangesAsync() > 0;
+        }
+
+        public async Task<bool> SaveDataViewDetailsAndRecalculateHeaderAsync(List<TEventOfferDetail> details, int offerId, int offerNo, int offerTypeId)
+        {
+            if (details == null || !details.Any()) return true;
+
+            await using var tx = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                _context.TEventOfferDetails.UpdateRange(details);
+                await _context.SaveChangesAsync();
+
+                // Recalculate header rollups via SP inside the active transaction
+                await CalculateEventOfferHeaderAsync(offerId, offerNo, offerTypeId);
+
+                await tx.CommitAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                await tx.RollbackAsync();
+                _logger.LogError(ex, "Transaction failed while updating details and recalculating header for OfferId={OfferId}: {Message}", offerId, ex.Message);
+                throw;
+            }
+        }
+
+        public async Task<bool> CalculateDataViewAsync(DataViewRequestDto request)
+        {
+            var conn = _context.Database.GetDbConnection();
+            bool wasClosed = conn.State != System.Data.ConnectionState.Open;
+            if (wasClosed)
+            {
+                await conn.OpenAsync();
+            }
+            try
+            {
+                await using var cmd = conn.CreateCommand();
+                if (_context.Database.CurrentTransaction != null)
+                {
+                    cmd.Transaction = _context.Database.CurrentTransaction.GetDbTransaction();
+                }
+                cmd.CommandText = "CALL public.sp_update_event_offer_detail_header(@p_offer_id, @p_offer_no, @p_offer_type_id, @p_save_percent, @p_incremental_percent, @p_space_purchase, @p_advertised_price_gst, @p_total_multibuy_price, @p_required_qty, @p_spend1, @p_save_pct1, @p_spend2, @p_save_pct2, @p_spend3, @p_save_pct3)";
+                cmd.CommandTimeout = 600;
+
+                void AddParam(string name, object? value)
+                {
+                    var param = cmd.CreateParameter();
+                    param.ParameterName = name.StartsWith("@") ? name : "@" + name;
+                    param.Value = value ?? DBNull.Value;
+                    cmd.Parameters.Add(param);
+                }
+
+                AddParam("p_offer_id", request.EventOfferId);
+                AddParam("p_offer_no", request.OfferNo);
+                AddParam("p_offer_type_id", request.OfferTypeId);
+                AddParam("p_save_percent", request.SavePercent);
+                AddParam("p_incremental_percent", request.IncrementalPercent);
+                AddParam("p_space_purchase", request.SpacePurchase);
+                AddParam("p_advertised_price_gst", DBNull.Value);
+                AddParam("p_total_multibuy_price", DBNull.Value);
+                AddParam("p_required_qty", DBNull.Value);
+                AddParam("p_spend1", request.Spend1);
+                AddParam("p_save_pct1", request.SavePct1);
+                AddParam("p_spend2", request.Spend2);
+                AddParam("p_save_pct2", request.SavePct2);
+                AddParam("p_spend3", request.Spend3);
+                AddParam("p_save_pct3", request.SavePct3);
+
+                await cmd.ExecuteNonQueryAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error while calculating SpendX data view: {Message}", ex.Message);
+                return false;
+            }
+            finally
+            {
+                if (wasClosed)
+                {
+                    await conn.CloseAsync();
+                }
+            }
+        }
+
+        public async Task<bool> CalculateEventOfferHeaderAsync(int offerId, int offerNo, int offerTypeId)
+        {
+            var conn = _context.Database.GetDbConnection();
+            bool wasClosed = conn.State != System.Data.ConnectionState.Open;
+            if (wasClosed)
+            {
+                await conn.OpenAsync();
+            }
+            try
+            {
+                await using var cmd = conn.CreateCommand();
+                if (_context.Database.CurrentTransaction != null)
+                {
+                    cmd.Transaction = _context.Database.CurrentTransaction.GetDbTransaction();
+                }
+                cmd.CommandText = "CALL public.sp_update_event_offer_header(@p_offer_id, @p_offer_no, @p_offer_type_id)";
+                cmd.CommandTimeout = 600;
+
+                void AddParam(string name, object? value)
+                {
+                    var param = cmd.CreateParameter();
+                    param.ParameterName = name.StartsWith("@") ? name : "@" + name;
+                    param.Value = value ?? DBNull.Value;
+                    cmd.Parameters.Add(param);
+                }
+
+                AddParam("p_offer_id", offerId);
+                AddParam("p_offer_no", offerNo);
+                AddParam("p_offer_type_id", offerTypeId);
+
+                await cmd.ExecuteNonQueryAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error while calculating SpendX event offer header: {Message}", ex.Message);
+                return false;
+            }
+            finally
+            {
+                if (wasClosed)
+                {
+                    await conn.CloseAsync();
+                }
             }
         }
     }

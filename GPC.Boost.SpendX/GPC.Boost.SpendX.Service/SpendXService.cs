@@ -7,6 +7,7 @@ using GPC.Boost.SpendX.Dto.RequestDto;
 using GPC.Boost.SpendX.Dto.ResponseDto;
 using GPC.Boost.SpendX.Repository;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 
 namespace GPC.Boost.SpendX.Service
 {
@@ -15,6 +16,9 @@ namespace GPC.Boost.SpendX.Service
         Task<CreateEventOfferResponseDto> AddEventOfferAsync(EventOfferRequestDto request);
         Task<SpendXOfferDto> GetEventOfferAsync(GetEventOfferRequestDto request);
         Task<SpendXOverviewSaveResponseDto> SaveEventOfferOverviewAsync(SpendXOverviewRequestDto request);
+        Task<List<ProductSearchResultDto>> SearchProductsByBrandAsync(string brand, string country);
+        Task<DataViewResponseDto> GetDataViewAsync(DataViewRequestDto request);
+        Task<DataviewCalculationsResponseDto> PostDataViewAsync(DataViewResponseDto request);
     }
 
     public class SpendXService : ISpendXService
@@ -75,7 +79,7 @@ namespace GPC.Boost.SpendX.Service
                 // If explicit SKUs were passed in request (SelectedSKUs, Details list, or Search.SKUs), filter
                 var eligibleProducts = brandProducts;
                 var explicitSkus = request.SelectedSKUs 
-                    ?? request.Details?.Where(d => !string.IsNullOrWhiteSpace(d.SKU)).Select(d => d.SKU).ToList()
+                    ?? request.Details?.Where(d => !string.IsNullOrWhiteSpace(d.SKU)).Select(d => d.SKU!).ToList()
                     ?? request.Search?.SKUs;
 
                 if (explicitSkus != null && explicitSkus.Any())
@@ -121,6 +125,7 @@ namespace GPC.Boost.SpendX.Service
 
                 // Populate offer header & handle Loyalty Variant (Item 5)
                 bool isLoyal = request.OfferTypeId == 118 || request.IsRewards;
+                offer.EventId = request.EventId;
                 offer.OfferNumber = request.OfferNo > 0 ? request.OfferNo : 1;
                 offer.OfferTypeId = isLoyal ? 118 : 18;
                 offer.OfferType = isLoyal ? "SPEND X GET Y% OFF - LOYAL" : "SPEND X GET Y% OFF";
@@ -149,13 +154,24 @@ namespace GPC.Boost.SpendX.Service
                 offer.Page = request.PageNumber;
                 offer.PagePosition = request.PositionId;
 
-                // SpendX 3-tier thresholds
+                // SpendX multi-tier logic: Tier 2 and Tier 3 require IsTiered == true
+                bool isTiered = request.IsTiered ?? (request.Spend2.HasValue && request.Spend2.Value > 0);
                 offer.Spend1 = request.Spend1;
                 offer.SavePct1 = request.SavePct1;
-                offer.Spend2 = request.Spend2;
-                offer.SavePct2 = request.SavePct2;
-                offer.Spend3 = request.Spend3;
-                offer.SavePct3 = request.SavePct3;
+                if (isTiered)
+                {
+                    offer.Spend2 = request.Spend2;
+                    offer.SavePct2 = request.SavePct2;
+                    offer.Spend3 = request.Spend3;
+                    offer.SavePct3 = request.SavePct3;
+                }
+                else
+                {
+                    offer.Spend2 = null;
+                    offer.SavePct2 = null;
+                    offer.Spend3 = null;
+                    offer.SavePct3 = null;
+                }
 
                 offer.IncrementalPercentage = request.IncrementalPercentage;
                 offer.SpacePurchase = request.SpacePurchase;
@@ -165,7 +181,17 @@ namespace GPC.Boost.SpendX.Service
                 decimal gst = string.Equals(request.Country, "NZ", StringComparison.OrdinalIgnoreCase) ? 0.15m : 0.10m;
 
                 // Highest nominal tier discount % for Advertised Price (BRD Item 1)
-                decimal maxDiscountPct = Math.Max(request.SavePct1, Math.Max(request.SavePct2 ?? 0m, request.SavePct3 ?? 0m));
+                decimal maxDiscountPct = Math.Max(offer.SavePct1, Math.Max(offer.SavePct2 ?? 0m, offer.SavePct3 ?? 0m));
+
+                // Calculate promotional duration in days from request StartDate and EndDate
+                int durationDays = 14;
+                if (!string.IsNullOrWhiteSpace(request.StartDate) && !string.IsNullOrWhiteSpace(request.EndDate)
+                    && DateTime.TryParse(request.StartDate, out var start)
+                    && DateTime.TryParse(request.EndDate, out var end)
+                    && end >= start)
+                {
+                    durationDays = Math.Max(1, (int)(end.Date - start.Date).TotalDays + 1);
+                }
 
                 // 3. Populate teventofferdetail records copying ALL helper attributes from tproducts
                 var details = new List<TEventOfferDetail>();
@@ -173,21 +199,9 @@ namespace GPC.Boost.SpendX.Service
 
                 foreach (var p in eligibleProducts)
                 {
-                    decimal edUnits = p.AverageMonthlySales ?? 10m;
-                    decimal incrementalUnits;
-                    decimal forecastUnits;
-
-                    // Support both lift percentage (e.g., 20 = 20% lift) and index percentage (e.g., 120 = 120% of EDUnits)
-                    if (incPct >= 100m)
-                    {
-                        forecastUnits = Math.Round(edUnits * (incPct / 100m), 0);
-                        incrementalUnits = forecastUnits - edUnits;
-                    }
-                    else
-                    {
-                        incrementalUnits = Math.Round(edUnits * (incPct / 100m), 0);
-                        forecastUnits = edUnits + incrementalUnits;
-                    }
+                    decimal edUnits = Math.Round(((p.AverageMonthlySales ?? 30m) / 30m) * durationDays, 2);
+                    decimal incrementalUnits = Math.Round(edUnits * (incPct / 100m), 0);
+                    decimal forecastUnits = edUnits + incrementalUnits;
 
                     decimal edPriceGst = p.EverydayPriceGst ?? (p.EverydayPrice.HasValue ? p.EverydayPrice.Value * (1 + gst) : 0m);
                     decimal edPrice = Math.Round(edPriceGst / (1 + gst), 2);
@@ -264,6 +278,43 @@ namespace GPC.Boost.SpendX.Service
                 var (success, offerId) = await _repository.SaveOrUpdateSpendXOfferAsync(offer, details, isUpdate, request.IsReserved);
                 if (success)
                 {
+                    // Save or update search history in tEventOfferSearchHistory
+                    if (request.Search != null)
+                    {
+                        try
+                        {
+                            var existingHistory = await _repository.GetEventOfferSearchHistoryAsync(
+                                request.EventId, request.PageNumber, request.PositionId, offerId, offer.OfferNumber);
+
+                            if (existingHistory != null)
+                            {
+                                existingHistory.SearchJson = JsonConvert.SerializeObject(request.Search);
+                                existingHistory.SearchedAt = DateTime.UtcNow;
+                                await _repository.UpdateEventOfferSearchHistoryAsync(existingHistory);
+                            }
+                            else
+                            {
+                                var newHistory = new TEventOfferSearchHistory
+                                {
+                                    EventId = request.EventId,
+                                    PageId = request.PageNumber,
+                                    PositionId = request.PositionId,
+                                    EventOfferId = offerId,
+                                    OfferNumber = offer.OfferNumber,
+                                    SearchJson = JsonConvert.SerializeObject(request.Search),
+                                    UserId = request.UserId,
+                                    Country = country,
+                                    SearchedAt = DateTime.UtcNow
+                                };
+                                await _repository.AddEventOfferSearchHistoryAsync(newHistory);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to persist search history for OfferId={OfferId}", offerId);
+                        }
+                    }
+
                     response.OfferId = offerId;
                     response.OfferNo = offer.OfferNumber;
                     response.SkuCount = details.Count;
@@ -283,6 +334,9 @@ namespace GPC.Boost.SpendX.Service
                 return response;
             }
         }
+
+
+
 
         public async Task<SpendXOfferDto> GetEventOfferAsync(GetEventOfferRequestDto request)
         {
@@ -314,6 +368,8 @@ namespace GPC.Boost.SpendX.Service
                 var details = await _repository.GetOfferDetailsAsync(offer.OfferId, offer.OfferNumber);
 
                 decimal gst = offer.Country.ToUpper() == "NZ" ? 0.15m : 0.10m;
+                bool isTiered = offer.Spend2.HasValue && offer.Spend2.Value > 0;
+
                 response.OfferId = offer.OfferId;
                 response.OfferNo = offer.OfferNumber;
                 response.PageId = offer.Page;
@@ -328,13 +384,14 @@ namespace GPC.Boost.SpendX.Service
                     OfferName = offer.OfferName,
                     Brand = offer.Brand,
                     IsRewards = offer.IsRewards ?? false,
+                    IsTiered = isTiered,
                     RepresentativePartNumber = details.FirstOrDefault()?.PartNo,
                     Spend1 = offer.Spend1,
                     SavePct1 = offer.SavePct1,
-                    Spend2 = offer.Spend2,
-                    SavePct2 = offer.SavePct2,
-                    Spend3 = offer.Spend3,
-                    SavePct3 = offer.SavePct3,
+                    Spend2 = isTiered ? offer.Spend2 : null,
+                    SavePct2 = isTiered ? offer.SavePct2 : null,
+                    Spend3 = isTiered ? offer.Spend3 : null,
+                    SavePct3 = isTiered ? offer.SavePct3 : null,
                     ForecastUnits = offer.ForecastUnits ?? 0,
                     IncrementalUnits = offer.IncrementalUnits ?? 0,
                     ForecastCost = offer.ForecastCost ?? 0,
@@ -349,11 +406,11 @@ namespace GPC.Boost.SpendX.Service
                 {
                     new SpendXTierDto { TierNumber = 1, SpendThreshold = offer.Spend1, DiscountPercent = offer.SavePct1 }
                 };
-                if (offer.Spend2.HasValue && offer.SavePct2.HasValue)
+                if (isTiered && offer.Spend2.HasValue && offer.SavePct2.HasValue)
                 {
                     response.Tiers.Add(new SpendXTierDto { TierNumber = 2, SpendThreshold = offer.Spend2.Value, DiscountPercent = offer.SavePct2.Value });
                 }
-                if (offer.Spend3.HasValue && offer.SavePct3.HasValue)
+                if (isTiered && offer.Spend3.HasValue && offer.SavePct3.HasValue)
                 {
                     response.Tiers.Add(new SpendXTierDto { TierNumber = 3, SpendThreshold = offer.Spend3.Value, DiscountPercent = offer.SavePct3.Value });
                 }
@@ -371,12 +428,13 @@ namespace GPC.Boost.SpendX.Service
                 // Pricing
                 response.Pricing = new SpendXPricingDto
                 {
+                    IsTiered = isTiered,
                     Spend1 = offer.Spend1,
                     SavePct1 = offer.SavePct1,
-                    Spend2 = offer.Spend2,
-                    SavePct2 = offer.SavePct2,
-                    Spend3 = offer.Spend3,
-                    SavePct3 = offer.SavePct3,
+                    Spend2 = isTiered ? offer.Spend2 : null,
+                    SavePct2 = isTiered ? offer.SavePct2 : null,
+                    Spend3 = isTiered ? offer.Spend3 : null,
+                    SavePct3 = isTiered ? offer.SavePct3 : null,
                     SpacePurchase = offer.SpacePurchase,
                     ForecastCost = offer.ForecastCost ?? 0,
                     ForecastSales = offer.ForecastSales ?? 0,
@@ -433,8 +491,8 @@ namespace GPC.Boost.SpendX.Service
                     return response;
                 }
 
-                // Item 5: Loyalty Variant Swap & Auto-Naming
-                bool isLoyal = request.Overview.IsRewards || offer.OfferTypeId == 118;
+                // Item 5: Loyalty Variant Swap & Auto-Naming (Respect user toggle)
+                bool isLoyal = request.Overview.IsRewards;
                 offer.IsRewards = isLoyal;
                 offer.OfferTypeId = isLoyal ? 118 : 18;
                 offer.OfferType = isLoyal ? "SPEND X GET Y% OFF - LOYAL" : "SPEND X GET Y% OFF";
@@ -460,37 +518,51 @@ namespace GPC.Boost.SpendX.Service
                 }
                 offer.OfferName = offerName;
 
-                // Overview & Tiers
+                // Overview & Tiers (Respect IsTiered toggle: if false, clear Tiers 2 & 3)
+                bool isTiered = request.Overview.IsTiered ?? (request.Overview.Spend2.HasValue && request.Overview.Spend2.Value > 0);
                 offer.Spend1 = request.Overview.Spend1 > 0 ? request.Overview.Spend1 : offer.Spend1;
                 offer.SavePct1 = request.Overview.SavePct1 > 0 ? request.Overview.SavePct1 : offer.SavePct1;
-                offer.Spend2 = request.Overview.Spend2;
-                offer.SavePct2 = request.Overview.SavePct2;
-                offer.Spend3 = request.Overview.Spend3;
-                offer.SavePct3 = request.Overview.SavePct3;
+                if (isTiered)
+                {
+                    offer.Spend2 = request.Overview.Spend2;
+                    offer.SavePct2 = request.Overview.SavePct2;
+                    offer.Spend3 = request.Overview.Spend3;
+                    offer.SavePct3 = request.Overview.SavePct3;
+                }
+                else
+                {
+                    offer.Spend2 = null;
+                    offer.SavePct2 = null;
+                    offer.Spend3 = null;
+                    offer.SavePct3 = null;
+                }
 
                 // Pricing overrides
-                if (request.Pricing.SpacePurchase.HasValue)
+                if (request.Pricing?.SpacePurchase.HasValue == true)
                 {
                     offer.SpacePurchase = request.Pricing.SpacePurchase;
                 }
 
                 // Promo Flags
-                offer.IsClearance = request.OfferInfo.Clearance;
-                offer.IsExclusive = request.OfferInfo.Exclusive;
-                offer.IsNew = request.OfferInfo.New;
-                offer.IsLowestPrice = request.OfferInfo.LowestPrice;
-                offer.IsLimitQuantity = request.OfferInfo.LimitedQuantity ? 1 : 0;
-                offer.IsOnlineOnly = request.OfferInfo.OnlineOnly;
-                offer.IsNotAvailableOnline = request.OfferInfo.NotAvailOnline;
-                offer.IsRaincheck = request.OfferInfo.NoRainCheck;
-                offer.IsOrderYoursToday = request.OfferInfo.OrderYoursToday;
-                offer.IsNotAvailableAllStores = request.OfferInfo.NotAvailableAllStores;
-                offer.IsLimitedStoreStock = request.OfferInfo.LimitedStoreStock;
-                offer.IsWhileStockLast = request.OfferInfo.WhileStocksLast;
-                offer.IsStoreStockOnly = request.OfferInfo.StoreStockOnly;
-                offer.ImageReference = request.OfferInfo.ImageReference;
-                offer.CopyReference = request.OfferInfo.CopyReference;
-                offer.OtherDetails = request.OfferInfo.Other;
+                if (request.OfferInfo != null)
+                {
+                    offer.IsClearance = request.OfferInfo.Clearance;
+                    offer.IsExclusive = request.OfferInfo.Exclusive;
+                    offer.IsNew = request.OfferInfo.New;
+                    offer.IsLowestPrice = request.OfferInfo.LowestPrice;
+                    offer.IsLimitQuantity = request.OfferInfo.LimitedQuantity ? 1 : 0;
+                    offer.IsOnlineOnly = request.OfferInfo.OnlineOnly;
+                    offer.IsNotAvailableOnline = request.OfferInfo.NotAvailOnline;
+                    offer.IsRaincheck = request.OfferInfo.NoRainCheck;
+                    offer.IsOrderYoursToday = request.OfferInfo.OrderYoursToday;
+                    offer.IsNotAvailableAllStores = request.OfferInfo.NotAvailableAllStores;
+                    offer.IsLimitedStoreStock = request.OfferInfo.LimitedStoreStock;
+                    offer.IsWhileStockLast = request.OfferInfo.WhileStocksLast;
+                    offer.IsStoreStockOnly = request.OfferInfo.StoreStockOnly;
+                    offer.ImageReference = request.OfferInfo.ImageReference;
+                    offer.CopyReference = request.OfferInfo.CopyReference;
+                    offer.OtherDetails = request.OfferInfo.Other;
+                }
 
                 offer.Page = request.PageId != 0 ? request.PageId : offer.Page;
                 offer.PagePosition = request.PositionId != 0 ? request.PositionId : offer.PagePosition;
@@ -519,6 +591,165 @@ namespace GPC.Boost.SpendX.Service
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in SaveEventOfferOverviewAsync: {Message}", ex.Message);
+                response.Error = new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = ex.Message };
+                return response;
+            }
+        }
+
+        public async Task<List<ProductSearchResultDto>> SearchProductsByBrandAsync(string brand, string country)
+        {
+            var brandList = brand.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            var products = await _repository.GetProductsByBrandsAsync(brandList, country, null);
+
+            return products.Select(p => new ProductSearchResultDto
+            {
+                Sku = p.Sku,
+                PartNumber = p.PartNo ?? p.Sku,
+                Description = p.Description ?? string.Empty,
+                Brand = p.Brand ?? string.Empty,
+                Country = p.Country,
+                EverydayPrice = p.EverydayPrice ?? 0m,
+                EverydayPriceGst = p.EverydayPriceGst ?? 0m,
+                ItemClass1 = p.ItemClass1,
+                ItemClass4 = p.ItemClass4,
+                AverageMonthlySales = p.AverageMonthlySales,
+                StockOnHandStore = p.StockOnHandStore,
+                StockOnHandDc = p.StockOnHandDc
+            }).ToList();
+        }
+
+        public async Task<DataViewResponseDto> GetDataViewAsync(DataViewRequestDto request)
+        {
+            var response = new DataViewResponseDto();
+            try
+            {
+                if (request == null)
+                {
+                    response.Error = new ErrorDto { ErrorCode = "INVALID_REQUEST", Message = "Request cannot be null." };
+                    return response;
+                }
+
+                var offer = await _repository.GetOfferByIdAsync(request.EventOfferId, request.OfferNo);
+                if (offer == null)
+                {
+                    response.Error = new ErrorDto { ErrorCode = "NOT_FOUND", Message = $"SpendX offer {request.EventOfferId} not found." };
+                    return response;
+                }
+
+                // Check if calculation needs to be refreshed across all 3 tiers and planning inputs
+                bool needsRecalc = (request.isOfferEdited ?? false)
+                    || (request.IncrementalPercent.HasValue && request.IncrementalPercent.Value != offer.IncrementalPercentage)
+                    || (request.SpacePurchase.HasValue && request.SpacePurchase.Value != offer.SpacePurchase)
+                    || (request.Spend1.HasValue && request.Spend1.Value != offer.Spend1)
+                    || (request.SavePct1.HasValue && request.SavePct1.Value != offer.SavePct1)
+                    || (request.Spend2.HasValue && request.Spend2.Value != offer.Spend2)
+                    || (request.SavePct2.HasValue && request.SavePct2.Value != offer.SavePct2)
+                    || (request.Spend3.HasValue && request.Spend3.Value != offer.Spend3)
+                    || (request.SavePct3.HasValue && request.SavePct3.Value != offer.SavePct3);
+
+                if (needsRecalc)
+                {
+                    await _repository.CalculateDataViewAsync(request);
+                    offer = await _repository.GetOfferByIdAsync(request.EventOfferId, request.OfferNo) ?? offer;
+                }
+
+                var (items, totalCount) = await _repository.GetDataViewAsync(request);
+
+                response.EventId = request.EventId;
+                response.OfferId = offer.OfferId;
+                response.OfferNo = offer.OfferNumber;
+                response.PageId = offer.Page;
+                response.PositionId = offer.PagePosition;
+                response.OfferTypeId = offer.OfferTypeId;
+                response.IsTiered = offer.Spend2.HasValue && offer.Spend2.Value > 0;
+                response.Spend1 = offer.Spend1;
+                response.SavePct1 = offer.SavePct1;
+                response.Spend2 = offer.Spend2;
+                response.SavePct2 = offer.SavePct2;
+                response.Spend3 = offer.Spend3;
+                response.SavePct3 = offer.SavePct3;
+                response.IncrementalPercent = offer.IncrementalPercentage;
+                response.SpacePurchase = offer.SpacePurchase;
+                response.PaginationInfo = new PaginationInfo
+                {
+                    TotalCount = totalCount,
+                    PageNumber = request.PageNumber > 0 ? request.PageNumber : 1,
+                    PageSize = request.PageSize > 0 ? request.PageSize : 100
+                };
+                response.EventOfferDataView = items;
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in GetDataViewAsync: {Message}", ex.Message);
+                response.Error = new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = ex.Message };
+                return response;
+            }
+        }
+
+        public async Task<DataviewCalculationsResponseDto> PostDataViewAsync(DataViewResponseDto request)
+        {
+            var response = new DataviewCalculationsResponseDto();
+            try
+            {
+                if (request == null || request.EventOfferDataView == null || !request.EventOfferDataView.Any())
+                {
+                    response.Error = new ErrorDto { ErrorCode = "EMPTY_DATA", Message = "EventOfferDataView list cannot be empty." };
+                    return response;
+                }
+
+                var currentDetails = await _repository.GetOfferDetailsAsync(request.OfferId, request.OfferNo);
+                if (currentDetails == null || !currentDetails.Any())
+                {
+                    response.Error = new ErrorDto { ErrorCode = "NOT_FOUND", Message = $"No detail records found for OfferId {request.OfferId}." };
+                    return response;
+                }
+
+                var detailLookup = currentDetails.ToDictionary(d => d.Sku, StringComparer.OrdinalIgnoreCase);
+
+                foreach (var item in request.EventOfferDataView)
+                {
+                    if (detailLookup.TryGetValue(item.Sku, out var d))
+                    {
+                        d.Categoryforecast = item.CatFcst;
+                        d.ForecastUnits = item.CatFcst;
+                        d.IncrementalForecast = item.IncrFcst;
+                        d.IsCategoryForecastLocked = item.isCatFcstLocked;
+                        d.DisplayIndicator = item.DisplayInd;
+                        d.IsSkuEdited = true;
+                        d.ScanSupportValue = item.ScanSupportValue;
+                        d.ScanSupportPercent = item.ScanSupportPercent;
+
+                        // Recompute line economics using Advertised Price (BRD Item 1)
+                        decimal cost = d.NationalAverageCost ?? d.VendorCostPerEach ?? 0m;
+                        decimal price = d.AdvertisedPrice ?? d.EverydayPrice ?? 0m;
+                        d.ForecastCost = Math.Round((d.Categoryforecast ?? 0) * cost, 2);
+                        d.ForecastSales = Math.Round((d.Categoryforecast ?? 0) * price, 2);
+                        d.ForecastTradeMarginDollar = Math.Round((d.ForecastSales ?? 0m) - (d.ForecastCost ?? 0m), 2);
+                        d.ForecastTradeMarginPercent = d.ForecastSales > 0 ? Math.Round(((d.ForecastTradeMarginDollar ?? 0m) / d.ForecastSales.Value) * 100m, 2) : 0m;
+                        d.ScanSupportDollar = Math.Round((d.ScanSupportValue ?? 0m) * (d.Categoryforecast ?? 0), 2);
+                    }
+                }
+
+                // Atomically update details and recalculate header rollups in a single transaction
+                await _repository.SaveDataViewDetailsAndRecalculateHeaderAsync(currentDetails, request.OfferId, request.OfferNo, request.OfferTypeId);
+
+                var updatedOffer = await _repository.GetOfferByIdAsync(request.OfferId, request.OfferNo);
+
+                return new DataviewCalculationsResponseDto
+                {
+                    Message = "SpendX data view updated successfully.",
+                    ForecastSales = updatedOffer?.ForecastSales ?? 0m,
+                    ForecastCost = updatedOffer?.ForecastCost ?? 0m,
+                    ForecastTmDollar = updatedOffer?.ForecastTradeMargin ?? 0m,
+                    ForecastTmPercent = updatedOffer?.ForecastTmPercent ?? 0m,
+                    TotalSupplierIncome = updatedOffer?.TotalSupplierIncome ?? 0m
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in PostDataViewAsync: {Message}", ex.Message);
                 response.Error = new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = ex.Message };
                 return response;
             }
