@@ -26,7 +26,9 @@ builder.UseMiddleware<GlobalExceptionMiddleware>();
 var configuration = builder.Configuration;
 string connectionString = Environment.GetEnvironmentVariable("PostgresDb") 
     ?? configuration.GetConnectionString("PostgresDb") 
-    ?? "Host=localhost;Port=5432;Database=boost_spendx;Username=postgres;Password=postgres;";
+    ?? configuration["PostgresDb"]
+    ?? configuration["Values:PostgresDb"]
+    ?? throw new InvalidOperationException("Database connection string 'PostgresDb' is not configured.");
 
 // Register DbContext with PostgreSQL
 builder.Services.AddDbContext<SpendXDbContext>(options =>
@@ -47,6 +49,8 @@ builder.Services.AddScoped<IValidator<SpendXOverviewRequestDto>, SpendXOverviewR
 builder.Services.AddScoped<IValidator<DataViewRequestDto>, DataViewRequestDtoValidator>();
 builder.Services.AddScoped<IValidator<DataViewResponseDto>, DataViewResponseDtoValidator>();
 builder.Services.AddScoped<IValidator<SearchByBrandRequestDto>, SearchByBrandRequestDtoValidator>();
+builder.Services.AddScoped<IValidator<MoveOfferRequestDto>, MoveOfferRequestDtoValidator>();
+builder.Services.AddScoped<IValidator<PricingExtractRequestDto>, PricingExtractRequestDtoValidator>();
 
 // Logging
 builder.Services.AddLogging(logging =>

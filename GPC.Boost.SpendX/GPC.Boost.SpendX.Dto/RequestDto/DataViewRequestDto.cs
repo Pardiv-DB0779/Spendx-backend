@@ -35,7 +35,10 @@ namespace GPC.Boost.SpendX.Dto.RequestDto
         public List<string>? Descriptions { get; set; }
 
         // Sorting
+        public bool? SortOnAdvPriceDesc { get; set; }
         public bool? SortOnEdPriceDesc { get; set; }
+        public bool? SortOnEdPriceGstDesc { get; set; }
+        public bool? SortOnEdUnitsDesc { get; set; }
         public bool? SortOnCatFcstDesc { get; set; }
         public bool? isOfferEdited { get; set; }
     }

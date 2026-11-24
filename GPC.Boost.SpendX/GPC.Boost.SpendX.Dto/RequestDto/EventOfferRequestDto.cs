@@ -41,15 +41,12 @@ namespace GPC.Boost.SpendX.Dto.RequestDto
         public int EventId { get; set; } = 1;
         public int PageNumber { get; set; } = 1;
         public int PositionId { get; set; } = 1;
-        public int offerNo { get; set; } = 1;
-        public int OfferNo { get => offerNo; set => offerNo = value; }
+        public int OfferNo { get; set; } = 1;
         public int? OfferId { get; set; }
         public string? UserId { get; set; }
         public string? Username { get => UserId; set => UserId = value; }
         public string? CreatedBy { get => UserId; set => UserId = value; }
-        public bool isBids { get; set; }
-        public bool isReserved { get; set; } = false;
-        public bool IsReserved { get => isReserved; set => isReserved = value; }
+        public bool IsReserved { get; set; } = false;
         public string? PageSelection { get; set; }
         public bool IsRewards { get; set; } = false;
 

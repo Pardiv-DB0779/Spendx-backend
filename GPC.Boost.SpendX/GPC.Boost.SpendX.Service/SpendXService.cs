@@ -20,6 +20,8 @@ namespace GPC.Boost.SpendX.Service
         Task<List<ProductSearchResultDto>> SearchProductsByBrandAsync(string brand, string country);
         Task<DataViewResponseDto> GetDataViewAsync(DataViewRequestDto request);
         Task<DataviewCalculationsResponseDto> PostDataViewAsync(DataViewResponseDto request);
+        Task<MoveOfferResponseDto> MoveOfferAsync(MoveOfferRequestDto request);
+        Task<PricingExtractResponseDto> GetPricingExtractAsync(int eventId, string? userId);
     }
 
     public class SpendXService : ISpendXService
@@ -62,6 +64,16 @@ namespace GPC.Boost.SpendX.Service
 
                 var brandDisplay = brands.Any() ? string.Join(", ", brands) : string.Empty;
                 var country = !string.IsNullOrWhiteSpace(request.Country) ? request.Country : "AU";
+
+                if (!brands.Any())
+                {
+                    response.Error = new ErrorDto
+                    {
+                        ErrorCode = "INVALID_REQUEST",
+                        Message = "At least one product brand must be specified (via ProductBrand or Search.ProductBrand)."
+                    };
+                    return response;
+                }
 
                 _logger.LogInformation("AddEventOfferAsync called for Brands={Brands}, Country={Country}, OfferId={OfferId}", brandDisplay, country, request.OfferId);
 
@@ -271,13 +283,10 @@ namespace GPC.Boost.SpendX.Service
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unhandled exception in AddEventOfferAsync: {Message}", ex.Message);
-                response.Error = new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = ex.Message, InnerDetail = ex.InnerException?.Message };
+                response.Error = new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while processing the event offer." };
                 return response;
             }
         }
-
-
-
 
 
 
@@ -310,7 +319,7 @@ namespace GPC.Boost.SpendX.Service
 
                 var (repPartNo, storeSoh, dcSoh) = await _repository.GetOfferDetailSummaryAsync(offer.OfferId, offer.OfferNumber);
 
-                decimal gst = offer.Country.ToUpper() == "NZ" ? 0.15m : 0.10m;
+                decimal gst = GetGstRate(offer.Country);
                 bool isTiered = offer.Spend2.HasValue && offer.Spend2.Value > 0;
 
                 response.OfferId = offer.OfferId;
@@ -463,8 +472,8 @@ namespace GPC.Boost.SpendX.Service
 
                 // Overview & Tiers (Respect IsTiered toggle: if false, clear Tiers 2 & 3)
                 bool isTiered = request.Overview.IsTiered ?? (request.Overview.Spend2.HasValue && request.Overview.Spend2.Value > 0);
-                offer.Spend1 = request.Overview.Spend1 > 0 ? request.Overview.Spend1 : offer.Spend1;
-                offer.SavePct1 = request.Overview.SavePct1 > 0 ? request.Overview.SavePct1 : offer.SavePct1;
+                offer.Spend1 = request.Overview.Spend1;
+                offer.SavePct1 = request.Overview.SavePct1;
                 if (isTiered)
                 {
                     offer.Spend2 = request.Overview.Spend2;
@@ -696,6 +705,87 @@ namespace GPC.Boost.SpendX.Service
                 response.Error = new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = ex.Message };
                 return response;
             }
+        }
+
+        public async Task<MoveOfferResponseDto> MoveOfferAsync(MoveOfferRequestDto request)
+        {
+            _logger.LogInformation("Starting MoveOfferAsync for EventId={EventId}, OfferId={OfferId}, from Page={SourcePageId} Pos={SourcePos} to Page={TargetPageId} Pos={TargetPos}",
+                request.EventId, request.OfferId, request.SourcePageId, request.SourcePagePosition, request.TargetPageId, request.TargetPagePosition);
+
+            var response = new MoveOfferResponseDto();
+            try
+            {
+                var offer = await _repository.GetOfferByIdAsync(request.OfferId);
+                if (offer == null || offer.EventId != request.EventId)
+                {
+                    _logger.LogWarning("Offer {OfferId} not found in Event {EventId}", request.OfferId, request.EventId);
+                    response.Error = new ErrorDto
+                    {
+                        ErrorCode = "NOT_FOUND",
+                        Message = $"Offer {request.OfferId} not found in Event {request.EventId}."
+                    };
+                    return response;
+                }
+
+                var success = await _repository.MoveOfferTransactionAsync(request);
+                if (success)
+                {
+                    response.Message = $"Offer {request.OfferId} moved successfully from Page: {request.SourcePageId} and Position: {request.SourcePagePosition} to Page: {request.TargetPageId} and Position: {request.TargetPagePosition}.";
+                    _logger.LogInformation("Successfully completed MoveOfferAsync for EventId={EventId}, OfferId={OfferId}", request.EventId, request.OfferId);
+                    return response;
+                }
+                else
+                {
+                    response.Error = new ErrorDto
+                    {
+                        ErrorCode = "UPDATE_FAILED",
+                        Message = "Error updating the records in the database."
+                    };
+                    return response;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in MoveOfferAsync: {Message}", ex.Message);
+                response.Error = new ErrorDto
+                {
+                    ErrorCode = "SERVER_ERROR",
+                    Message = "An unexpected error occurred while moving the offer."
+                };
+                return response;
+            }
+        }
+
+        public async Task<PricingExtractResponseDto> GetPricingExtractAsync(int eventId, string? userId)
+        {
+            _logger.LogInformation("Generating pricing extract for EventId={EventId}, UserId={UserId}", eventId, userId);
+            var response = new PricingExtractResponseDto { EventId = eventId };
+
+            try
+            {
+                var rows = await _repository.GetPricingExtractAsync(eventId);
+                response.TotalCount = rows.Count;
+                response.SpendXGetYPercent = rows.Where(r => !r.IsRewards).ToList();
+                response.SpendXGetYPercentLoyal = rows.Where(r => r.IsRewards).ToList();
+                response.Message = $"Pricing extract generated successfully. Total records: {rows.Count} (SpendX: {response.SpendXGetYPercent.Count}, SpendX Loyal: {response.SpendXGetYPercentLoyal.Count}).";
+                _logger.LogInformation("Pricing extract completed for EventId={EventId}: Total={TotalCount}", eventId, response.TotalCount);
+                return response;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error generating pricing extract for EventId={EventId}: {Message}", eventId, ex.Message);
+                response.Error = new ErrorDto
+                {
+                    ErrorCode = "PRICING_EXTRACT_ERROR",
+                    Message = "An error occurred while generating the pricing extract."
+                };
+                return response;
+            }
+        }
+
+        private static decimal GetGstRate(string? country)
+        {
+            return string.Equals(country, "NZ", StringComparison.OrdinalIgnoreCase) ? 0.15m : 0.10m;
         }
     }
 }

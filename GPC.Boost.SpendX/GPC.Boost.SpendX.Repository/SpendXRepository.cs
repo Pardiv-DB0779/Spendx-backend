@@ -31,6 +31,8 @@ namespace GPC.Boost.SpendX.Repository
         Task<bool> CalculateDataViewAsync(DataViewRequestDto request);
         Task<bool> CalculateEventOfferHeaderAsync(int offerId, int offerNo, int offerTypeId);
         Task<bool> CalculateOfferDetailAndHeaderAsync(TEventOffer offer);
+        Task<bool> MoveOfferTransactionAsync(MoveOfferRequestDto request);
+        Task<List<SpendXPricingExtractRowDto>> GetPricingExtractAsync(int eventId);
     }
 
     public class SpendXRepository : ISpendXRepository
@@ -71,6 +73,7 @@ namespace GPC.Boost.SpendX.Repository
                 if (isUpdate)
                 {
                     _context.TEventOffers.Update(offer);
+                    await _context.SaveChangesAsync();
 
                     // Execute direct delete to avoid EF tracking collisions
                     await _context.TEventOfferDetails
@@ -189,6 +192,7 @@ namespace GPC.Boost.SpendX.Repository
 
         public async Task<bool> UpdateOfferHeaderOverviewAsync(TEventOffer offer)
         {
+            await using var tx = await _context.Database.BeginTransactionAsync();
             try
             {
                 _context.TEventOffers.Update(offer);
@@ -203,13 +207,15 @@ namespace GPC.Boost.SpendX.Repository
 
                 await _context.SaveChangesAsync();
 
-                // Recalculate detail lines and header financials via stored procedure
+                // Recalculate detail lines and header financials via stored procedure inside transaction
                 await CalculateOfferDetailAndHeaderAsync(offer);
 
+                await tx.CommitAsync();
                 return true;
             }
             catch (Exception ex)
             {
+                await tx.RollbackAsync();
                 _logger.LogError(ex, "Failed to update offer overview: {Message}", ex.Message);
                 return false;
             }
@@ -264,17 +270,20 @@ namespace GPC.Boost.SpendX.Repository
             await conn.OpenAsync();
 
             await using var cmd = new NpgsqlCommand(@"
-                SELECT * FROM public.fn_get_spendx_dataview(
+                SELECT * FROM public.get_dataview(
                     @p_offer_id,
                     @p_offer_no,
                     @p_skus,
                     @p_part_numbers,
                     @p_brands,
                     @p_part_descriptions,
-                    @p_sort_edprice_desc,
+                    @p_sort_advpricegst_desc,
+                    @p_sort_edpricegst_desc,
+                    @p_sort_edunits_desc,
                     @p_sort_catfcst_desc,
                     @p_page_number,
-                    @p_page_size
+                    @p_page_size,
+                    @p_sort_edprice_desc
                 )", conn);
 
             cmd.Parameters.AddWithValue("p_offer_id", request.EventOfferId);
@@ -283,17 +292,26 @@ namespace GPC.Boost.SpendX.Repository
             cmd.Parameters.AddWithValue("p_part_numbers", (object?)request.PartNumbers?.ToArray() ?? DBNull.Value);
             cmd.Parameters.AddWithValue("p_brands", (object?)request.Brands?.ToArray() ?? DBNull.Value);
             cmd.Parameters.AddWithValue("p_part_descriptions", (object?)request.Descriptions?.ToArray() ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("p_sort_edprice_desc", (object?)request.SortOnEdPriceDesc ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("p_sort_advpricegst_desc", (object?)request.SortOnAdvPriceDesc ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("p_sort_edpricegst_desc", (object?)request.SortOnEdPriceGstDesc ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("p_sort_edunits_desc", (object?)request.SortOnEdUnitsDesc ?? DBNull.Value);
             cmd.Parameters.AddWithValue("p_sort_catfcst_desc", (object?)request.SortOnCatFcstDesc ?? DBNull.Value);
             cmd.Parameters.AddWithValue("p_page_number", request.PageNumber > 0 ? request.PageNumber : 1);
             cmd.Parameters.AddWithValue("p_page_size", request.PageSize > 0 ? request.PageSize : 100);
+            cmd.Parameters.AddWithValue("p_sort_edprice_desc", (object?)request.SortOnEdPriceDesc ?? DBNull.Value);
 
             await using var reader = await cmd.ExecuteReaderAsync();
+            bool isFirstRow = true;
             while (await reader.ReadAsync())
             {
-                if (totalCount == 0 && !reader.IsDBNull(reader.GetOrdinal("total_count")))
+                if (isFirstRow)
                 {
-                    totalCount = reader.GetInt32(reader.GetOrdinal("total_count"));
+                    var countOrdinal = reader.GetOrdinal("total_count");
+                    if (!reader.IsDBNull(countOrdinal))
+                    {
+                        totalCount = reader.GetInt32(countOrdinal);
+                    }
+                    isFirstRow = false;
                 }
 
                 items.Add(new OfferSkuOverviewDto
@@ -302,29 +320,64 @@ namespace GPC.Boost.SpendX.Repository
                     PartNumber = reader.IsDBNull(reader.GetOrdinal("part_number")) ? string.Empty : reader.GetString(reader.GetOrdinal("part_number")),
                     Brand = reader.IsDBNull(reader.GetOrdinal("brand")) ? string.Empty : reader.GetString(reader.GetOrdinal("brand")),
                     Description = reader.IsDBNull(reader.GetOrdinal("description")) ? string.Empty : reader.GetString(reader.GetOrdinal("description")),
+                    FromPriceInd = !reader.IsDBNull(reader.GetOrdinal("frompriceind")) && reader.GetBoolean(reader.GetOrdinal("frompriceind")),
+                    DisplayInd = !reader.IsDBNull(reader.GetOrdinal("displayind")) && reader.GetBoolean(reader.GetOrdinal("displayind")),
+                    Clearance = reader.IsDBNull(reader.GetOrdinal("clearance")) ? null : reader.GetString(reader.GetOrdinal("clearance")),
+                    Showroom = reader.IsDBNull(reader.GetOrdinal("showroom")) ? null : reader.GetString(reader.GetOrdinal("showroom")),
+                    AdvPriceGst = reader.IsDBNull(reader.GetOrdinal("advpricegst")) ? 0m : reader.GetDecimal(reader.GetOrdinal("advpricegst")),
+                    AdvPriceExGst = reader.IsDBNull(reader.GetOrdinal("advpriceexgst")) ? 0m : reader.GetDecimal(reader.GetOrdinal("advpriceexgst")),
                     EdPrice = reader.IsDBNull(reader.GetOrdinal("edprice")) ? 0m : reader.GetDecimal(reader.GetOrdinal("edprice")),
                     EdPriceGst = reader.IsDBNull(reader.GetOrdinal("edpricegst")) ? 0m : reader.GetDecimal(reader.GetOrdinal("edpricegst")),
+                    CalcSavePercent = reader.IsDBNull(reader.GetOrdinal("calcsavepercent")) ? 0m : reader.GetDecimal(reader.GetOrdinal("calcsavepercent")),
+                    CalcSaveValue = reader.IsDBNull(reader.GetOrdinal("calcsavevalue")) ? 0m : reader.GetDecimal(reader.GetOrdinal("calcsavevalue")),
                     LeCost = reader.IsDBNull(reader.GetOrdinal("lecost")) ? 0m : reader.GetDecimal(reader.GetOrdinal("lecost")),
                     NatAvgCost = reader.IsDBNull(reader.GetOrdinal("natavgcost")) ? 0m : reader.GetDecimal(reader.GetOrdinal("natavgcost")),
                     CatFcst = reader.IsDBNull(reader.GetOrdinal("catfcst")) ? 0 : reader.GetInt32(reader.GetOrdinal("catfcst")),
                     IncrFcst = reader.IsDBNull(reader.GetOrdinal("incrfcst")) ? 0 : reader.GetInt32(reader.GetOrdinal("incrfcst")),
-                    EdUnits = reader.IsDBNull(reader.GetOrdinal("edunits")) ? 0m : reader.GetDecimal(reader.GetOrdinal("edunits")),
                     FcstCost = reader.IsDBNull(reader.GetOrdinal("fcstcost")) ? 0m : reader.GetDecimal(reader.GetOrdinal("fcstcost")),
                     FcstSales = reader.IsDBNull(reader.GetOrdinal("fcstsales")) ? 0m : reader.GetDecimal(reader.GetOrdinal("fcstsales")),
                     FcstTmValue = reader.IsDBNull(reader.GetOrdinal("fcsttmvalue")) ? 0m : reader.GetDecimal(reader.GetOrdinal("fcsttmvalue")),
                     FcstTmPercent = reader.IsDBNull(reader.GetOrdinal("fcsttmpercent")) ? 0m : reader.GetDecimal(reader.GetOrdinal("fcsttmpercent")),
-                    SohStore = reader.IsDBNull(reader.GetOrdinal("sohstore")) ? 0 : reader.GetInt32(reader.GetOrdinal("sohstore")),
-                    SohDc = reader.IsDBNull(reader.GetOrdinal("sohdc")) ? 0 : reader.GetInt32(reader.GetOrdinal("sohdc")),
-                    TotalTieUp = reader.IsDBNull(reader.GetOrdinal("totaltieup")) ? 0 : reader.GetInt32(reader.GetOrdinal("totaltieup")),
-                    TieUpCost = reader.IsDBNull(reader.GetOrdinal("tieupcost")) ? 0m : reader.GetDecimal(reader.GetOrdinal("tieupcost")),
+                    EdUnits = reader.IsDBNull(reader.GetOrdinal("edunits")) ? 0m : reader.GetDecimal(reader.GetOrdinal("edunits")),
                     ScanSupportValue = reader.IsDBNull(reader.GetOrdinal("scansupportvalue")) ? 0m : reader.GetDecimal(reader.GetOrdinal("scansupportvalue")),
                     ScanSupportPercent = reader.IsDBNull(reader.GetOrdinal("scansupportpercent")) ? 0m : reader.GetDecimal(reader.GetOrdinal("scansupportpercent")),
-                    DisplayInd = !reader.IsDBNull(reader.GetOrdinal("displayind")) && reader.GetBoolean(reader.GetOrdinal("displayind")),
-                    Clearance = reader.IsDBNull(reader.GetOrdinal("clearance")) ? null : reader.GetString(reader.GetOrdinal("clearance")),
-                    Showroom = reader.IsDBNull(reader.GetOrdinal("showroom")) ? null : reader.GetString(reader.GetOrdinal("showroom")),
+                    SohStore = reader.IsDBNull(reader.GetOrdinal("sohstore")) ? 0 : reader.GetInt32(reader.GetOrdinal("sohstore")),
+                    SohDc = reader.IsDBNull(reader.GetOrdinal("sohdc")) ? 0 : reader.GetInt32(reader.GetOrdinal("sohdc")),
+                    Grp0Qty = reader.IsDBNull(reader.GetOrdinal("grp0qty")) ? 0 : reader.GetInt32(reader.GetOrdinal("grp0qty")),
+                    Grp1Qty = reader.IsDBNull(reader.GetOrdinal("grp1qty")) ? 0 : reader.GetInt32(reader.GetOrdinal("grp1qty")),
+                    Grp2Qty = reader.IsDBNull(reader.GetOrdinal("grp2qty")) ? 0 : reader.GetInt32(reader.GetOrdinal("grp2qty")),
+                    Grp3Qty = reader.IsDBNull(reader.GetOrdinal("grp3qty")) ? 0 : reader.GetInt32(reader.GetOrdinal("grp3qty")),
+                    Grp4Qty = reader.IsDBNull(reader.GetOrdinal("grp4qty")) ? 0 : reader.GetInt32(reader.GetOrdinal("grp4qty")),
+                    Grp5Qty = reader.IsDBNull(reader.GetOrdinal("grp5qty")) ? 0 : reader.GetInt32(reader.GetOrdinal("grp5qty")),
+                    TotalTieUp = reader.IsDBNull(reader.GetOrdinal("totaltieup")) ? 0 : reader.GetInt32(reader.GetOrdinal("totaltieup")),
+                    TieUpPercentFcst = reader.IsDBNull(reader.GetOrdinal("tieuppercentfcst")) ? 0m : reader.GetDecimal(reader.GetOrdinal("tieuppercentfcst")),
+                    TieUpCost = reader.IsDBNull(reader.GetOrdinal("tieupcost")) ? 0m : reader.GetDecimal(reader.GetOrdinal("tieupcost")),
+                    SupplierId = reader.IsDBNull(reader.GetOrdinal("supplierid")) ? null : reader.GetString(reader.GetOrdinal("supplierid")),
+                    SupplierName = reader.IsDBNull(reader.GetOrdinal("suppliername")) ? null : reader.GetString(reader.GetOrdinal("suppliername")),
+                    IC2 = reader.IsDBNull(reader.GetOrdinal("ic2")) ? null : reader.GetString(reader.GetOrdinal("ic2")),
+                    IC3 = reader.IsDBNull(reader.GetOrdinal("ic3")) ? null : reader.GetString(reader.GetOrdinal("ic3")),
+                    IC4 = reader.IsDBNull(reader.GetOrdinal("ic4")) ? null : reader.GetString(reader.GetOrdinal("ic4")),
+                    ComOfferIC1 = reader.IsDBNull(reader.GetOrdinal("comofferic1")) ? null : reader.GetString(reader.GetOrdinal("comofferic1")),
+                    IncrementalTmDollar = reader.IsDBNull(reader.GetOrdinal("incrementaltmdollar")) ? null : reader.GetDecimal(reader.GetOrdinal("incrementaltmdollar")),
+                    IncrementalSalesDollar = reader.IsDBNull(reader.GetOrdinal("incrementalsalesdollar")) ? null : reader.GetDecimal(reader.GetOrdinal("incrementalsalesdollar")),
+                    EdCost = reader.IsDBNull(reader.GetOrdinal("edcost")) ? null : reader.GetDecimal(reader.GetOrdinal("edcost")),
+                    EDUnitTmDollar = reader.IsDBNull(reader.GetOrdinal("edunittmdollar")) ? null : reader.GetDecimal(reader.GetOrdinal("edunittmdollar")),
+                    AdvUnitTmDollar = reader.IsDBNull(reader.GetOrdinal("advunittmdollar")) ? null : reader.GetDecimal(reader.GetOrdinal("advunittmdollar")),
+                    AdvSalesDollar = reader.IsDBNull(reader.GetOrdinal("advsalesdollar")) ? null : reader.GetDecimal(reader.GetOrdinal("advsalesdollar")),
+                    EdSalesDollar = reader.IsDBNull(reader.GetOrdinal("edsalesdollar")) ? null : reader.GetDecimal(reader.GetOrdinal("edsalesdollar")),
+                    Spend1 = reader.IsDBNull(reader.GetOrdinal("spend1")) ? 0m : reader.GetDecimal(reader.GetOrdinal("spend1")),
+                    SavePct1 = reader.IsDBNull(reader.GetOrdinal("savepct1")) ? 0m : reader.GetDecimal(reader.GetOrdinal("savepct1")),
+                    Spend2 = reader.IsDBNull(reader.GetOrdinal("spend2")) ? null : reader.GetDecimal(reader.GetOrdinal("spend2")),
+                    SavePct2 = reader.IsDBNull(reader.GetOrdinal("savepct2")) ? null : reader.GetDecimal(reader.GetOrdinal("savepct2")),
+                    Spend3 = reader.IsDBNull(reader.GetOrdinal("spend3")) ? null : reader.GetDecimal(reader.GetOrdinal("spend3")),
+                    SavePct3 = reader.IsDBNull(reader.GetOrdinal("savepct3")) ? null : reader.GetDecimal(reader.GetOrdinal("savepct3")),
+                    IsTiered = !reader.IsDBNull(reader.GetOrdinal("istiered")) && reader.GetBoolean(reader.GetOrdinal("istiered")),
                     isCatFcstLocked = reader.IsDBNull(reader.GetOrdinal("iscatfcstlocked")) ? null : reader.GetBoolean(reader.GetOrdinal("iscatfcstlocked")),
                     isSkuEdited = reader.IsDBNull(reader.GetOrdinal("isskuedited")) ? null : reader.GetBoolean(reader.GetOrdinal("isskuedited")),
-                    isSkuActive = reader.IsDBNull(reader.GetOrdinal("isskuactive")) ? null : reader.GetBoolean(reader.GetOrdinal("isskuactive"))
+                    isSkuActive = reader.IsDBNull(reader.GetOrdinal("isskuactive")) ? null : reader.GetBoolean(reader.GetOrdinal("isskuactive")),
+                    isFromPriceOverriden = reader.IsDBNull(reader.GetOrdinal("isfrompriceoverriden")) ? null : reader.GetBoolean(reader.GetOrdinal("isfrompriceoverriden")),
+                    FutureEdPrice = reader.IsDBNull(reader.GetOrdinal("futureedprice")) ? null : reader.GetDecimal(reader.GetOrdinal("futureedprice")),
+                    FutureEdEffectiveDate = reader.IsDBNull(reader.GetOrdinal("futureedeffectivedate")) ? null : DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("futureedeffectivedate")))
                 });
             }
 
@@ -358,7 +411,7 @@ namespace GPC.Boost.SpendX.Repository
             {
                 await tx.RollbackAsync();
                 _logger.LogError(ex, "Transaction failed while updating details and recalculating header for OfferId={OfferId}: {Message}", offerId, ex.Message);
-                throw;
+                return false;
             }
         }
 
@@ -371,7 +424,7 @@ namespace GPC.Boost.SpendX.Repository
                 ["p_offer_id"] = request.EventOfferId,
                 ["p_offer_no"] = request.OfferNo,
                 ["p_offer_type_id"] = request.OfferTypeId,
-                ["p_save_percent"] = request.SavePercent,
+                ["p_save_percent"] = request.SavePct1 ?? request.SavePercent,
                 ["p_incremental_percent"] = request.IncrementalPercent,
                 ["p_space_purchase"] = request.SpacePurchase,
                 ["p_advertised_price_gst"] = DBNull.Value,
@@ -469,6 +522,169 @@ namespace GPC.Boost.SpendX.Repository
                     await conn.CloseAsync();
                 }
             }
+        }
+
+        public async Task<bool> MoveOfferTransactionAsync(MoveOfferRequestDto request)
+        {
+            _logger.LogInformation("Starting MoveOfferTransactionAsync: EventId={EventId}, OfferId={OfferId}, Source=Page{SourcePageId}Pos{SourcePos} -> Target=Page{TargetPageId}Pos{TargetPos}",
+                request.EventId, request.OfferId, request.SourcePageId, request.SourcePagePosition, request.TargetPageId, request.TargetPagePosition);
+
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                // 1. Check if an offer currently occupies the target position
+                var existingTargetOffer = await _context.TEventOffers
+                    .FirstOrDefaultAsync(o => o.EventId == request.EventId 
+                                           && o.Page == request.TargetPageId 
+                                           && o.PagePosition == request.TargetPagePosition);
+
+                if (existingTargetOffer != null && existingTargetOffer.OfferId != request.OfferId)
+                {
+                    _logger.LogInformation("Displacing existing target offer OfferId={TargetOfferId} to PagePosition=0", existingTargetOffer.OfferId);
+                    existingTargetOffer.PagePosition = 0;
+                    _context.TEventOffers.Update(existingTargetOffer);
+                }
+
+                // 2. Update moving offer header
+                var movingOffer = await _context.TEventOffers
+                    .FirstOrDefaultAsync(o => o.EventId == request.EventId && o.OfferId == request.OfferId);
+
+                if (movingOffer != null)
+                {
+                    movingOffer.Page = request.TargetPageId;
+                    movingOffer.PagePosition = request.TargetPagePosition;
+                    _context.TEventOffers.Update(movingOffer);
+                }
+
+                // 3. Update tMudMap slots
+                var sourceMudMap = await _context.TMudMaps
+                    .FirstOrDefaultAsync(m => m.EventId == request.EventId 
+                                           && m.PageId == request.SourcePageId 
+                                           && m.PositionId == request.SourcePagePosition);
+
+                var targetMudMap = await _context.TMudMaps
+                    .FirstOrDefaultAsync(m => m.EventId == request.EventId 
+                                           && m.PageId == request.TargetPageId 
+                                           && m.PositionId == request.TargetPagePosition);
+
+                if (targetMudMap == null)
+                {
+                    targetMudMap = new TMudMap
+                    {
+                        EventId = request.EventId,
+                        PageId = request.TargetPageId,
+                        PositionId = request.TargetPagePosition,
+                        Country = sourceMudMap?.Country ?? movingOffer?.Country ?? "AU",
+                        IsActive = true
+                    };
+                    await _context.TMudMaps.AddAsync(targetMudMap);
+                }
+
+                if (movingOffer != null)
+                {
+                    SyncMudMapFromOffer(targetMudMap, movingOffer);
+                }
+
+                if (sourceMudMap != null)
+                {
+                    sourceMudMap.OfferId = null;
+                    sourceMudMap.OfferNumber = null;
+                    sourceMudMap.OfferName = null;
+                    sourceMudMap.OfferType = null;
+                    sourceMudMap.Brand = null;
+                    sourceMudMap.AdvertisedPrice = null;
+                    sourceMudMap.EverydayPrice = null;
+                    sourceMudMap.SavePercent = null;
+                    sourceMudMap.SaveValue = null;
+                    sourceMudMap.IsReserved = false;
+                    sourceMudMap.Clearance = false;
+                    sourceMudMap.New = false;
+                    sourceMudMap.Loyalty = false;
+                    sourceMudMap.UpdatedAt = DateTime.UtcNow;
+                }
+
+                await _context.SaveChangesAsync();
+
+                // 4. Update line items in teventofferdetail directly within the EF transaction scope
+                if (existingTargetOffer != null && existingTargetOffer.OfferId != request.OfferId)
+                {
+                    await _context.TEventOfferDetails
+                        .Where(d => d.OfferId == existingTargetOffer.OfferId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(d => d.PagePosition, 0));
+                }
+
+                await _context.TEventOfferDetails
+                    .Where(d => d.OfferId == request.OfferId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(d => d.Page, request.TargetPageId)
+                        .SetProperty(d => d.PagePosition, request.TargetPagePosition));
+
+                // 5. Update Search History
+                var histories = await _context.TEventOfferSearchHistories
+                    .Where(h => h.EventId == request.EventId 
+                             && h.PageId == request.SourcePageId 
+                             && h.PositionId == request.SourcePagePosition 
+                             && h.EventOfferId == request.OfferId)
+                    .ToListAsync();
+
+                foreach (var h in histories)
+                {
+                    h.PageId = request.TargetPageId;
+                    h.PositionId = request.TargetPagePosition;
+                }
+                await _context.SaveChangesAsync();
+
+                await transaction.CommitAsync();
+                _logger.LogInformation("MoveOfferTransactionAsync completed successfully for OfferId={OfferId}", request.OfferId);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                _logger.LogError(ex, "MoveOfferTransactionAsync failed and rolled back for OfferId={OfferId}: {Message}", request.OfferId, ex.Message);
+                throw;
+            }
+        }
+
+        public async Task<List<SpendXPricingExtractRowDto>> GetPricingExtractAsync(int eventId)
+        {
+            var results = new List<SpendXPricingExtractRowDto>();
+            var connStr = _context.Database.GetConnectionString();
+            await using var conn = new NpgsqlConnection(connStr);
+            await conn.OpenAsync();
+
+            await using var cmd = new NpgsqlCommand("SELECT * FROM public.spspendxpricingbyeventid(@p_eventid)", conn);
+            cmd.Parameters.AddWithValue("p_eventid", eventId);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                results.Add(new SpendXPricingExtractRowDto
+                {
+                    EventDesc = reader.IsDBNull(reader.GetOrdinal("EVENTDESC")) ? null : reader.GetString(reader.GetOrdinal("EVENTDESC")),
+                    Page = reader.IsDBNull(reader.GetOrdinal("PAGE")) ? 0 : reader.GetInt32(reader.GetOrdinal("PAGE")),
+                    PagePosn = reader.IsDBNull(reader.GetOrdinal("PAGEPOSN")) ? 0 : reader.GetInt32(reader.GetOrdinal("PAGEPOSN")),
+                    ComOfferType = reader.IsDBNull(reader.GetOrdinal("COMOFFERTYPE")) ? null : reader.GetString(reader.GetOrdinal("COMOFFERTYPE")),
+                    ComOfferIC1 = reader.IsDBNull(reader.GetOrdinal("COMOFFERIC1")) ? null : reader.GetString(reader.GetOrdinal("COMOFFERIC1")),
+                    PartNo = reader.IsDBNull(reader.GetOrdinal("PARTNO")) ? null : reader.GetString(reader.GetOrdinal("PARTNO")),
+                    Description = reader.IsDBNull(reader.GetOrdinal("DESC")) ? null : reader.GetString(reader.GetOrdinal("DESC")),
+                    Brand = reader.IsDBNull(reader.GetOrdinal("BRAND")) ? null : reader.GetString(reader.GetOrdinal("BRAND")),
+                    Sku = reader.IsDBNull(reader.GetOrdinal("SKU")) ? string.Empty : reader.GetString(reader.GetOrdinal("SKU")),
+                    EdPriceGst = reader.IsDBNull(reader.GetOrdinal("EDPRICEGST")) ? 0m : reader.GetDecimal(reader.GetOrdinal("EDPRICEGST")),
+                    StartDate = reader.IsDBNull(reader.GetOrdinal("STARTDTE")) ? null : DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("STARTDTE"))),
+                    EndDate = reader.IsDBNull(reader.GetOrdinal("ENDDTE")) ? null : DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("ENDDTE"))),
+                    Spend1 = reader.IsDBNull(reader.GetOrdinal("SPEND1")) ? 0m : reader.GetDecimal(reader.GetOrdinal("SPEND1")),
+                    Spend2 = reader.IsDBNull(reader.GetOrdinal("SPEND2")) ? null : reader.GetDecimal(reader.GetOrdinal("SPEND2")),
+                    Spend3 = reader.IsDBNull(reader.GetOrdinal("SPEND3")) ? null : reader.GetDecimal(reader.GetOrdinal("SPEND3")),
+                    SavePct1 = reader.IsDBNull(reader.GetOrdinal("SAVEPCT1")) ? 0m : reader.GetDecimal(reader.GetOrdinal("SAVEPCT1")),
+                    SavePct2 = reader.IsDBNull(reader.GetOrdinal("SAVEPCT2")) ? null : reader.GetDecimal(reader.GetOrdinal("SAVEPCT2")),
+                    SavePct3 = reader.IsDBNull(reader.GetOrdinal("SAVEPCT3")) ? null : reader.GetDecimal(reader.GetOrdinal("SAVEPCT3")),
+                    AdvPriceGst = reader.IsDBNull(reader.GetOrdinal("ADVPRICEGST")) ? 0m : reader.GetDecimal(reader.GetOrdinal("ADVPRICEGST")),
+                    IsRewards = !reader.IsDBNull(reader.GetOrdinal("ISREWARDS")) && reader.GetBoolean(reader.GetOrdinal("ISREWARDS"))
+                });
+            }
+
+            return results;
         }
     }
 }
