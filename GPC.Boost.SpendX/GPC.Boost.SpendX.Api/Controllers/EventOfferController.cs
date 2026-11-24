@@ -79,7 +79,7 @@ namespace GPC.Boost.SpendX.Api.Controllers
                 if (result.Error != null)
                 {
                     await response.WriteAsJsonAsync(result);
-                    response.StatusCode = MapErrorToStatusCode(result.Error.ErrorCode);
+                    response.StatusCode = HttpStatusCode.InternalServerError;
                     return response;
                 }
 
@@ -170,7 +170,7 @@ namespace GPC.Boost.SpendX.Api.Controllers
                 if (result.Error != null)
                 {
                     await response.WriteAsJsonAsync(result);
-                    response.StatusCode = MapErrorToStatusCode(result.Error.ErrorCode);
+                    response.StatusCode = HttpStatusCode.InternalServerError;
                     return response;
                 }
 
@@ -222,7 +222,7 @@ namespace GPC.Boost.SpendX.Api.Controllers
                 if (result.Error != null)
                 {
                     await response.WriteAsJsonAsync(result);
-                    response.StatusCode = MapErrorToStatusCode(result.Error.ErrorCode);
+                    response.StatusCode = HttpStatusCode.InternalServerError;
                     return response;
                 }
 
@@ -295,7 +295,7 @@ namespace GPC.Boost.SpendX.Api.Controllers
                 if (result.Error != null)
                 {
                     await response.WriteAsJsonAsync(result);
-                    response.StatusCode = MapErrorToStatusCode(result.Error.ErrorCode);
+                    response.StatusCode = HttpStatusCode.InternalServerError;
                     return response;
                 }
 
@@ -347,7 +347,7 @@ namespace GPC.Boost.SpendX.Api.Controllers
                 if (result.Error != null)
                 {
                     await response.WriteAsJsonAsync(result);
-                    response.StatusCode = MapErrorToStatusCode(result.Error.ErrorCode);
+                    response.StatusCode = HttpStatusCode.InternalServerError;
                     return response;
                 }
 
@@ -362,16 +362,6 @@ namespace GPC.Boost.SpendX.Api.Controllers
                 response.StatusCode = HttpStatusCode.InternalServerError;
                 return response;
             }
-        }
-
-        private static HttpStatusCode MapErrorToStatusCode(string? errorCode)
-        {
-            return errorCode?.ToUpperInvariant() switch
-            {
-                "NOT_FOUND" => HttpStatusCode.NotFound,
-                "BAD_REQUEST" or "INVALID_REQUEST" or "EMPTY_DATA" or "VALIDATION_FAILED" or "NO_PRODUCTS_FOUND" or "NO_ELIGIBLE_SKUS" => HttpStatusCode.BadRequest,
-                _ => HttpStatusCode.InternalServerError
-            };
         }
     }
 }
