@@ -30,6 +30,7 @@ namespace GPC.Boost.SpendX.Repository
         Task<bool> SaveDataViewDetailsAndRecalculateHeaderAsync(List<TEventOfferDetail> details, int offerId, int offerNo, int offerTypeId);
         Task<bool> CalculateDataViewAsync(DataViewRequestDto request);
         Task<bool> CalculateEventOfferHeaderAsync(int offerId, int offerNo, int offerTypeId);
+        Task<bool> CalculateOfferDetailAndHeaderAsync(TEventOffer offer);
     }
 
     public class SpendXRepository : ISpendXRepository
@@ -118,10 +119,10 @@ namespace GPC.Boost.SpendX.Repository
 
                 await _context.SaveChangesAsync();
 
-                // Recalculate header rollup via stored procedure inside transaction to ensure consistency
+                // Recalculate detail lines and header rollups via stored procedure inside transaction
                 if (details != null && details.Any())
                 {
-                    await CalculateEventOfferHeaderAsync(offer.OfferId, offer.OfferNumber, offer.OfferTypeId);
+                    await CalculateOfferDetailAndHeaderAsync(offer);
                 }
 
                 await tx.CommitAsync();
@@ -202,8 +203,8 @@ namespace GPC.Boost.SpendX.Repository
 
                 await _context.SaveChangesAsync();
 
-                // Recalculate header financials via stored procedure
-                await CalculateEventOfferHeaderAsync(offer.OfferId, offer.OfferNumber, offer.OfferTypeId);
+                // Recalculate detail lines and header financials via stored procedure
+                await CalculateOfferDetailAndHeaderAsync(offer);
 
                 return true;
             }
@@ -399,6 +400,32 @@ namespace GPC.Boost.SpendX.Repository
             };
 
             return await ExecuteStoredProcedureAsync(sql, parameters, "SpendX event offer header calculation");
+        }
+
+        public async Task<bool> CalculateOfferDetailAndHeaderAsync(TEventOffer offer)
+        {
+            const string sql = "CALL public.sp_update_event_offer_detail_header(@p_offer_id, @p_offer_no, @p_offer_type_id, @p_save_percent, @p_incremental_percent, @p_space_purchase, @p_advertised_price_gst, @p_total_multibuy_price, @p_required_qty, @p_spend1, @p_save_pct1, @p_spend2, @p_save_pct2, @p_spend3, @p_save_pct3)";
+
+            var parameters = new Dictionary<string, object?>
+            {
+                ["p_offer_id"] = offer.OfferId,
+                ["p_offer_no"] = offer.OfferNumber,
+                ["p_offer_type_id"] = offer.OfferTypeId,
+                ["p_save_percent"] = offer.SavePercent ?? offer.SavePct1,
+                ["p_incremental_percent"] = offer.IncrementalPercentage,
+                ["p_space_purchase"] = offer.SpacePurchase,
+                ["p_advertised_price_gst"] = DBNull.Value,
+                ["p_total_multibuy_price"] = DBNull.Value,
+                ["p_required_qty"] = DBNull.Value,
+                ["p_spend1"] = offer.Spend1,
+                ["p_save_pct1"] = offer.SavePct1,
+                ["p_spend2"] = offer.Spend2,
+                ["p_save_pct2"] = offer.SavePct2,
+                ["p_spend3"] = offer.Spend3,
+                ["p_save_pct3"] = offer.SavePct3
+            };
+
+            return await ExecuteStoredProcedureAsync(sql, parameters, "SpendX detail and header calculation");
         }
 
         private async Task<bool> ExecuteStoredProcedureAsync(string commandText, IDictionary<string, object?> parameters, string operationName)

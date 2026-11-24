@@ -179,103 +179,41 @@ namespace GPC.Boost.SpendX.Service
                 offer.UpdatedBy = request.UserId;
                 offer.UpdatedAt = DateTime.UtcNow;
 
-                decimal gst = string.Equals(request.Country, "NZ", StringComparison.OrdinalIgnoreCase) ? 0.15m : 0.10m;
-
-                // Highest nominal tier discount % for Advertised Price (BRD Item 1)
-                decimal maxDiscountPct = Math.Max(offer.SavePct1, Math.Max(offer.SavePct2 ?? 0m, offer.SavePct3 ?? 0m));
-
-                // Calculate promotional duration in days from request StartDate and EndDate (no hardcoded fallback)
-                int durationDays = 0;
-                if (!string.IsNullOrWhiteSpace(request.StartDate) && !string.IsNullOrWhiteSpace(request.EndDate)
-                    && DateTime.TryParse(request.StartDate, out var start)
-                    && DateTime.TryParse(request.EndDate, out var end)
-                    && end >= start)
+                // 3. Populate teventofferdetail records copying attributes from tproducts (matching PROD AutoMapper pattern; calculations done in stored procedure)
+                var details = eligibleProducts.Select(p => new TEventOfferDetail
                 {
-                    durationDays = (int)(end.Date - start.Date).TotalDays + 1;
-                }
-
-                // 3. Populate teventofferdetail records copying ALL helper attributes from tproducts
-                var details = new List<TEventOfferDetail>();
-                decimal incPct = request.IncrementalPercentage;
-
-                foreach (var p in eligibleProducts)
-                {
-                    decimal edUnits = durationDays > 0 && p.AverageMonthlySales.HasValue
-                        ? Math.Round((p.AverageMonthlySales.Value / 30m) * durationDays, 2)
-                        : 0m;
-                    decimal incrementalUnits = Math.Round(edUnits * (incPct / 100m), 0);
-                    decimal forecastUnits = edUnits + incrementalUnits;
-
-                    decimal edPriceGst = p.EverydayPriceGst ?? (p.EverydayPrice.HasValue ? p.EverydayPrice.Value * (1 + gst) : 0m);
-                    decimal edPrice = Math.Round(edPriceGst / (1 + gst), 2);
-                    decimal cost = p.NationalAverageCost ?? p.LeCost ?? 0m;
-
-                    // AdvertisedPrice uses maximum tier discount % (BRD Item 1)
-                    decimal advPrice = Math.Round(edPrice * (1m - (maxDiscountPct / 100m)), 2);
-                    decimal advPriceGst = Math.Round(edPriceGst * (1m - (maxDiscountPct / 100m)), 2);
-                    decimal saveVal = Math.Round(edPrice - advPrice, 2);
-
-                    // Line-item forecasts in teventofferdetail use this AdvertisedPrice (conservative forecasting)
-                    decimal fcstSales = Math.Round(forecastUnits * advPrice, 2);
-                    decimal fcstCost = Math.Round(forecastUnits * cost, 2);
-                    decimal fcstTmDollar = Math.Round(fcstSales - fcstCost, 2);
-                    decimal fcstTmPercent = fcstSales > 0 ? Math.Round((fcstTmDollar / fcstSales) * 100, 2) : 0m;
-
-                    decimal incSales = Math.Round(incrementalUnits * advPrice, 2);
-                    decimal incTm = Math.Round(incrementalUnits * (advPrice - cost), 2);
-
-                    details.Add(new TEventOfferDetail
-                    {
-                        Sku = p.Sku,
-                        PartNo = p.PartNo,
-                        Description = p.Description,
-                        Brand = p.Brand,
-                        ItemClass1 = p.ItemClass1,
-                        ItemClass2 = p.ItemClass2,
-                        ItemClass3 = p.ItemClass3,
-                        ItemClass4 = p.ItemClass4,
-                        EverydayPriceGst = edPriceGst,
-                        EverydayPrice = edPrice,
-                        AdvertisedPrice = advPrice,
-                        AdvertisedPriceGst = advPriceGst,
-                        CalculatedSavePercentage = maxDiscountPct,
-                        CalculatedSaveValue = saveVal,
-                        ExtendedAdvertisedPrice = Math.Round(forecastUnits * advPrice, 2),
-                        EverydayUnits = edUnits,
-                        ForecastUnits = forecastUnits,
-                        Categoryforecast = (int)forecastUnits,
-                        IncrementalForecast = (int)incrementalUnits,
-                        ForecastCost = fcstCost,
-                        ForecastSales = fcstSales,
-                        ForecastTradeMarginDollar = fcstTmDollar,
-                        ForecastTradeMarginPercent = fcstTmPercent,
-                        EverydayTradeMarginDollar = Math.Round(edUnits * (edPrice - cost), 2),
-                        EverydayTradeMarginPercent = (edUnits * edPrice) > 0 ? Math.Round((Math.Round(edUnits * (edPrice - cost), 2) / (edUnits * edPrice)) * 100, 2) : 0m,
-                        IncrementalSales = incSales,
-                        IncrementalTradeDollar = incTm,
-                        LeCost = p.LeCost,
-                        LatestEffectiveCost = p.LeCost,
-                        NationalAverageCost = cost,
-                        CategoryCost = cost,
-                        VendorCostPerEach = p.VendorCostPerEach,
-                        StockOnHandStore = p.StockOnHandStore,
-                        StockOnHandDc = p.StockOnHandDc,
-                        ClearanceIndicator = p.Clearance,
-                        G0 = p.G0,
-                        G1 = p.G1,
-                        G2 = p.G2,
-                        G3 = p.G3,
-                        G4 = p.G4,
-                        G5 = p.G5,
-                        PricePoint6 = p.PricePoint6,
-                        PricePoint6IncludingGst = p.PricePoint6IncludingGst,
-                        IsSkuActive = true,
-                        IsSkuEdited = false,
-                        DisplayIndicator = true,
-                        Page = request.PageNumber,
-                        PagePosition = request.PositionId
-                    });
-                }
+                    Sku = p.Sku,
+                    PartNo = p.PartNo ?? p.Sku,
+                    Description = p.Description,
+                    Brand = p.Brand,
+                    ItemClass1 = p.ItemClass1,
+                    ItemClass2 = p.ItemClass2,
+                    ItemClass3 = p.ItemClass3,
+                    ItemClass4 = p.ItemClass4,
+                    EverydayPrice = p.EverydayPrice,
+                    EverydayPriceGst = p.EverydayPriceGst,
+                    LeCost = p.LeCost,
+                    LatestEffectiveCost = p.LeCost,
+                    NationalAverageCost = p.NationalAverageCost ?? p.LeCost,
+                    CategoryCost = p.NationalAverageCost ?? p.LeCost,
+                    VendorCostPerEach = p.VendorCostPerEach,
+                    StockOnHandStore = p.StockOnHandStore,
+                    StockOnHandDc = p.StockOnHandDc,
+                    ClearanceIndicator = p.Clearance,
+                    G0 = p.G0,
+                    G1 = p.G1,
+                    G2 = p.G2,
+                    G3 = p.G3,
+                    G4 = p.G4,
+                    G5 = p.G5,
+                    PricePoint6 = p.PricePoint6,
+                    PricePoint6IncludingGst = p.PricePoint6IncludingGst,
+                    IsSkuActive = true,
+                    IsSkuEdited = false,
+                    DisplayIndicator = true,
+                    Page = request.PageNumber,
+                    PagePosition = request.PositionId
+                }).ToList();
 
                 // 4. Save to Repository (Pass isReserved flag only if user explicitly requested)
                 var (success, offerId) = await _repository.SaveOrUpdateSpendXOfferAsync(offer, details, isUpdate, request.IsReserved);
