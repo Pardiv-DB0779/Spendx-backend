@@ -20,6 +20,7 @@ namespace GPC.Boost.SpendX.Repository
         Task<TEventOffer?> GetOfferByIdAsync(int offerId, int offerNo = 1);
         Task<TEventOffer?> GetOfferByPositionAsync(int eventId, int pageId, int positionId);
         Task<List<TEventOfferDetail>> GetOfferDetailsAsync(int offerId, int offerNo = 1);
+        Task<(string? PartNumber, decimal StoreSOH, decimal DcSOH)> GetOfferDetailSummaryAsync(int offerId, int offerNo = 1);
         Task<bool> UpdateOfferHeaderOverviewAsync(TEventOffer offer);
         Task<bool> AddEventOfferSearchHistoryAsync(TEventOfferSearchHistory searchHistory);
         Task<TEventOfferSearchHistory?> GetEventOfferSearchHistoryAsync(int eventId, int pageId, int positionId, int offerId, int offerNumber);
@@ -154,6 +155,37 @@ namespace GPC.Boost.SpendX.Repository
                 .ToListAsync();
         }
 
+        public async Task<(string? PartNumber, decimal StoreSOH, decimal DcSOH)> GetOfferDetailSummaryAsync(int offerId, int offerNo = 1)
+        {
+            await using var conn = new NpgsqlConnection(_context.Database.GetConnectionString());
+            await conn.OpenAsync();
+
+            const string sql = @"
+                SELECT 
+                    MIN(""partNo"") AS partNumber,
+                    COALESCE(SUM(""stockOnHandStore""), 0) AS totalStore,
+                    COALESCE(SUM(""stockOnHandDc""), 0) AS totalDC
+                FROM public.""teventofferdetail""
+                WHERE ""offerId"" = @offerId
+                  AND ""offerNo"" = @offerNo
+                  AND (""isSkuActive"" = TRUE OR ""isSkuActive"" IS NULL);";
+
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("offerId", offerId);
+            cmd.Parameters.AddWithValue("offerNo", offerNo);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                var partNo = reader.IsDBNull(0) ? null : reader.GetString(0);
+                var storeSoh = reader.IsDBNull(1) ? 0m : Convert.ToDecimal(reader.GetValue(1));
+                var dcSoh = reader.IsDBNull(2) ? 0m : Convert.ToDecimal(reader.GetValue(2));
+                return (partNo, storeSoh, dcSoh);
+            }
+
+            return (null, 0m, 0m);
+        }
+
         public async Task<bool> UpdateOfferHeaderOverviewAsync(TEventOffer offer)
         {
             try
@@ -170,7 +202,7 @@ namespace GPC.Boost.SpendX.Repository
 
                 await _context.SaveChangesAsync();
 
-                // Recalculate header financials via stored procedure (BRD Items 2 & 7)
+                // Recalculate header financials via stored procedure
                 await CalculateEventOfferHeaderAsync(offer.OfferId, offer.OfferNumber, offer.OfferTypeId);
 
                 return true;
@@ -223,88 +255,77 @@ namespace GPC.Boost.SpendX.Repository
 
         public async Task<(List<OfferSkuOverviewDto> Items, int TotalCount)> GetDataViewAsync(DataViewRequestDto request)
         {
-            var query = _context.TEventOfferDetails
-                .Where(d => d.OfferId == request.EventOfferId && d.OfferNo == request.OfferNo && (d.IsSkuActive == true || d.IsSkuActive == null));
+            var items = new List<OfferSkuOverviewDto>();
+            int totalCount = 0;
 
-            if (request.SKUs != null && request.SKUs.Any())
+            var connStr = _context.Database.GetConnectionString();
+            await using var conn = new NpgsqlConnection(connStr);
+            await conn.OpenAsync();
+
+            await using var cmd = new NpgsqlCommand(@"
+                SELECT * FROM public.fn_get_spendx_dataview(
+                    @p_offer_id,
+                    @p_offer_no,
+                    @p_skus,
+                    @p_part_numbers,
+                    @p_brands,
+                    @p_part_descriptions,
+                    @p_sort_edprice_desc,
+                    @p_sort_catfcst_desc,
+                    @p_page_number,
+                    @p_page_size
+                )", conn);
+
+            cmd.Parameters.AddWithValue("p_offer_id", request.EventOfferId);
+            cmd.Parameters.AddWithValue("p_offer_no", request.OfferNo);
+            cmd.Parameters.AddWithValue("p_skus", (object?)request.SKUs?.ToArray() ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("p_part_numbers", (object?)request.PartNumbers?.ToArray() ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("p_brands", (object?)request.Brands?.ToArray() ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("p_part_descriptions", (object?)request.Descriptions?.ToArray() ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("p_sort_edprice_desc", (object?)request.SortOnEdPriceDesc ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("p_sort_catfcst_desc", (object?)request.SortOnCatFcstDesc ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("p_page_number", request.PageNumber > 0 ? request.PageNumber : 1);
+            cmd.Parameters.AddWithValue("p_page_size", request.PageSize > 0 ? request.PageSize : 100);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
             {
-                var upperSkus = request.SKUs.Select(s => s.Trim().ToUpper()).ToList();
-                query = query.Where(d => upperSkus.Contains(d.Sku.ToUpper()));
+                if (totalCount == 0 && !reader.IsDBNull(reader.GetOrdinal("total_count")))
+                {
+                    totalCount = reader.GetInt32(reader.GetOrdinal("total_count"));
+                }
+
+                items.Add(new OfferSkuOverviewDto
+                {
+                    Sku = reader.IsDBNull(reader.GetOrdinal("sku")) ? string.Empty : reader.GetString(reader.GetOrdinal("sku")),
+                    PartNumber = reader.IsDBNull(reader.GetOrdinal("part_number")) ? string.Empty : reader.GetString(reader.GetOrdinal("part_number")),
+                    Brand = reader.IsDBNull(reader.GetOrdinal("brand")) ? string.Empty : reader.GetString(reader.GetOrdinal("brand")),
+                    Description = reader.IsDBNull(reader.GetOrdinal("description")) ? string.Empty : reader.GetString(reader.GetOrdinal("description")),
+                    EdPrice = reader.IsDBNull(reader.GetOrdinal("edprice")) ? 0m : reader.GetDecimal(reader.GetOrdinal("edprice")),
+                    EdPriceGst = reader.IsDBNull(reader.GetOrdinal("edpricegst")) ? 0m : reader.GetDecimal(reader.GetOrdinal("edpricegst")),
+                    LeCost = reader.IsDBNull(reader.GetOrdinal("lecost")) ? 0m : reader.GetDecimal(reader.GetOrdinal("lecost")),
+                    NatAvgCost = reader.IsDBNull(reader.GetOrdinal("natavgcost")) ? 0m : reader.GetDecimal(reader.GetOrdinal("natavgcost")),
+                    CatFcst = reader.IsDBNull(reader.GetOrdinal("catfcst")) ? 0 : reader.GetInt32(reader.GetOrdinal("catfcst")),
+                    IncrFcst = reader.IsDBNull(reader.GetOrdinal("incrfcst")) ? 0 : reader.GetInt32(reader.GetOrdinal("incrfcst")),
+                    EdUnits = reader.IsDBNull(reader.GetOrdinal("edunits")) ? 0m : reader.GetDecimal(reader.GetOrdinal("edunits")),
+                    FcstCost = reader.IsDBNull(reader.GetOrdinal("fcstcost")) ? 0m : reader.GetDecimal(reader.GetOrdinal("fcstcost")),
+                    FcstSales = reader.IsDBNull(reader.GetOrdinal("fcstsales")) ? 0m : reader.GetDecimal(reader.GetOrdinal("fcstsales")),
+                    FcstTmValue = reader.IsDBNull(reader.GetOrdinal("fcsttmvalue")) ? 0m : reader.GetDecimal(reader.GetOrdinal("fcsttmvalue")),
+                    FcstTmPercent = reader.IsDBNull(reader.GetOrdinal("fcsttmpercent")) ? 0m : reader.GetDecimal(reader.GetOrdinal("fcsttmpercent")),
+                    SohStore = reader.IsDBNull(reader.GetOrdinal("sohstore")) ? 0 : reader.GetInt32(reader.GetOrdinal("sohstore")),
+                    SohDc = reader.IsDBNull(reader.GetOrdinal("sohdc")) ? 0 : reader.GetInt32(reader.GetOrdinal("sohdc")),
+                    TotalTieUp = reader.IsDBNull(reader.GetOrdinal("totaltieup")) ? 0 : reader.GetInt32(reader.GetOrdinal("totaltieup")),
+                    TieUpCost = reader.IsDBNull(reader.GetOrdinal("tieupcost")) ? 0m : reader.GetDecimal(reader.GetOrdinal("tieupcost")),
+                    ScanSupportValue = reader.IsDBNull(reader.GetOrdinal("scansupportvalue")) ? 0m : reader.GetDecimal(reader.GetOrdinal("scansupportvalue")),
+                    ScanSupportPercent = reader.IsDBNull(reader.GetOrdinal("scansupportpercent")) ? 0m : reader.GetDecimal(reader.GetOrdinal("scansupportpercent")),
+                    DisplayInd = !reader.IsDBNull(reader.GetOrdinal("displayind")) && reader.GetBoolean(reader.GetOrdinal("displayind")),
+                    Clearance = reader.IsDBNull(reader.GetOrdinal("clearance")) ? null : reader.GetString(reader.GetOrdinal("clearance")),
+                    Showroom = reader.IsDBNull(reader.GetOrdinal("showroom")) ? null : reader.GetString(reader.GetOrdinal("showroom")),
+                    isCatFcstLocked = reader.IsDBNull(reader.GetOrdinal("iscatfcstlocked")) ? null : reader.GetBoolean(reader.GetOrdinal("iscatfcstlocked")),
+                    isSkuEdited = reader.IsDBNull(reader.GetOrdinal("isskuedited")) ? null : reader.GetBoolean(reader.GetOrdinal("isskuedited")),
+                    isSkuActive = reader.IsDBNull(reader.GetOrdinal("isskuactive")) ? null : reader.GetBoolean(reader.GetOrdinal("isskuactive"))
+                });
             }
-
-            if (request.Brands != null && request.Brands.Any())
-            {
-                var upperBrands = request.Brands.Select(b => b.Trim().ToUpper()).ToList();
-                query = query.Where(d => d.Brand != null && upperBrands.Contains(d.Brand.ToUpper()));
-            }
-
-            if (request.PartNumbers != null && request.PartNumbers.Any())
-            {
-                var upperParts = request.PartNumbers.Select(p => p.Trim().ToUpper()).ToList();
-                query = query.Where(d => d.PartNo != null && upperParts.Contains(d.PartNo.ToUpper()));
-            }
-
-            if (request.Descriptions != null && request.Descriptions.Any())
-            {
-                query = query.Where(d => d.Description != null && request.Descriptions.Any(desc => d.Description.Contains(desc)));
-            }
-
-            if (request.SortOnEdPriceDesc.HasValue)
-            {
-                query = request.SortOnEdPriceDesc.Value
-                    ? query.OrderByDescending(d => d.EverydayPrice).ThenBy(d => d.Sku)
-                    : query.OrderBy(d => d.EverydayPrice).ThenBy(d => d.Sku);
-            }
-            else if (request.SortOnCatFcstDesc.HasValue)
-            {
-                query = request.SortOnCatFcstDesc.Value
-                    ? query.OrderByDescending(d => d.Categoryforecast).ThenBy(d => d.Sku)
-                    : query.OrderBy(d => d.Categoryforecast).ThenBy(d => d.Sku);
-            }
-            else
-            {
-                query = query.OrderBy(d => d.Sku);
-            }
-
-            int totalCount = await query.CountAsync();
-            int pageSize = request.PageSize > 0 ? request.PageSize : 100;
-            int pageNumber = request.PageNumber > 0 ? request.PageNumber : 1;
-
-            var details = await query
-                .Skip((pageNumber - 1) * pageSize)
-                .Take(pageSize)
-                .ToListAsync();
-
-            var items = details.Select(d => new OfferSkuOverviewDto
-            {
-                Sku = d.Sku,
-                PartNumber = d.PartNo ?? d.Sku,
-                Brand = d.Brand ?? string.Empty,
-                Description = d.Description ?? string.Empty,
-                EdPrice = d.EverydayPrice ?? 0m,
-                EdPriceGst = d.EverydayPriceGst ?? 0m,
-                LeCost = d.LeCost ?? 0m,
-                NatAvgCost = d.NationalAverageCost ?? 0m,
-                CatFcst = d.Categoryforecast ?? 0,
-                IncrFcst = d.IncrementalForecast ?? 0,
-                EdUnits = d.EverydayUnits ?? 0m,
-                FcstCost = d.ForecastCost ?? 0m,
-                FcstSales = d.ForecastSales ?? 0m,
-                FcstTmValue = d.ForecastTradeMarginDollar ?? 0m,
-                FcstTmPercent = d.ForecastTradeMarginPercent ?? 0m,
-                SohStore = (int)(d.StockOnHandStore ?? 0m),
-                SohDc = (int)(d.StockOnHandDc ?? 0m),
-                TotalTieUp = d.TotalTieUp ?? 0,
-                TieUpCost = d.TieUpCost ?? 0m,
-                ScanSupportValue = d.ScanSupportValue ?? 0m,
-                ScanSupportPercent = d.ScanSupportPercent ?? 0m,
-                DisplayInd = d.DisplayIndicator ?? true,
-                Clearance = d.ClearanceIndicator,
-                Showroom = d.ShowroomIndicator,
-                isCatFcstLocked = d.IsCategoryForecastLocked,
-                isSkuEdited = d.IsSkuEdited,
-                isSkuActive = d.IsSkuActive
-            }).ToList();
 
             return (items, totalCount);
         }
@@ -342,64 +363,45 @@ namespace GPC.Boost.SpendX.Repository
 
         public async Task<bool> CalculateDataViewAsync(DataViewRequestDto request)
         {
-            var conn = _context.Database.GetDbConnection();
-            bool wasClosed = conn.State != System.Data.ConnectionState.Open;
-            if (wasClosed)
-            {
-                await conn.OpenAsync();
-            }
-            try
-            {
-                await using var cmd = conn.CreateCommand();
-                if (_context.Database.CurrentTransaction != null)
-                {
-                    cmd.Transaction = _context.Database.CurrentTransaction.GetDbTransaction();
-                }
-                cmd.CommandText = "CALL public.sp_update_event_offer_detail_header(@p_offer_id, @p_offer_no, @p_offer_type_id, @p_save_percent, @p_incremental_percent, @p_space_purchase, @p_advertised_price_gst, @p_total_multibuy_price, @p_required_qty, @p_spend1, @p_save_pct1, @p_spend2, @p_save_pct2, @p_spend3, @p_save_pct3)";
-                cmd.CommandTimeout = 600;
+            const string sql = "CALL public.sp_update_event_offer_detail_header(@p_offer_id, @p_offer_no, @p_offer_type_id, @p_save_percent, @p_incremental_percent, @p_space_purchase, @p_advertised_price_gst, @p_total_multibuy_price, @p_required_qty, @p_spend1, @p_save_pct1, @p_spend2, @p_save_pct2, @p_spend3, @p_save_pct3)";
 
-                void AddParam(string name, object? value)
-                {
-                    var param = cmd.CreateParameter();
-                    param.ParameterName = name.StartsWith("@") ? name : "@" + name;
-                    param.Value = value ?? DBNull.Value;
-                    cmd.Parameters.Add(param);
-                }
-
-                AddParam("p_offer_id", request.EventOfferId);
-                AddParam("p_offer_no", request.OfferNo);
-                AddParam("p_offer_type_id", request.OfferTypeId);
-                AddParam("p_save_percent", request.SavePercent);
-                AddParam("p_incremental_percent", request.IncrementalPercent);
-                AddParam("p_space_purchase", request.SpacePurchase);
-                AddParam("p_advertised_price_gst", DBNull.Value);
-                AddParam("p_total_multibuy_price", DBNull.Value);
-                AddParam("p_required_qty", DBNull.Value);
-                AddParam("p_spend1", request.Spend1);
-                AddParam("p_save_pct1", request.SavePct1);
-                AddParam("p_spend2", request.Spend2);
-                AddParam("p_save_pct2", request.SavePct2);
-                AddParam("p_spend3", request.Spend3);
-                AddParam("p_save_pct3", request.SavePct3);
-
-                await cmd.ExecuteNonQueryAsync();
-                return true;
-            }
-            catch (Exception ex)
+            var parameters = new Dictionary<string, object?>
             {
-                _logger.LogWarning(ex, "Error while calculating SpendX data view: {Message}", ex.Message);
-                return false;
-            }
-            finally
-            {
-                if (wasClosed)
-                {
-                    await conn.CloseAsync();
-                }
-            }
+                ["p_offer_id"] = request.EventOfferId,
+                ["p_offer_no"] = request.OfferNo,
+                ["p_offer_type_id"] = request.OfferTypeId,
+                ["p_save_percent"] = request.SavePercent,
+                ["p_incremental_percent"] = request.IncrementalPercent,
+                ["p_space_purchase"] = request.SpacePurchase,
+                ["p_advertised_price_gst"] = DBNull.Value,
+                ["p_total_multibuy_price"] = DBNull.Value,
+                ["p_required_qty"] = DBNull.Value,
+                ["p_spend1"] = request.Spend1,
+                ["p_save_pct1"] = request.SavePct1,
+                ["p_spend2"] = request.Spend2,
+                ["p_save_pct2"] = request.SavePct2,
+                ["p_spend3"] = request.Spend3,
+                ["p_save_pct3"] = request.SavePct3
+            };
+
+            return await ExecuteStoredProcedureAsync(sql, parameters, "SpendX data view calculation");
         }
 
         public async Task<bool> CalculateEventOfferHeaderAsync(int offerId, int offerNo, int offerTypeId)
+        {
+            const string sql = "CALL public.sp_update_event_offer_header(@p_offer_id, @p_offer_no, @p_offer_type_id)";
+
+            var parameters = new Dictionary<string, object?>
+            {
+                ["p_offer_id"] = offerId,
+                ["p_offer_no"] = offerNo,
+                ["p_offer_type_id"] = offerTypeId
+            };
+
+            return await ExecuteStoredProcedureAsync(sql, parameters, "SpendX event offer header calculation");
+        }
+
+        private async Task<bool> ExecuteStoredProcedureAsync(string commandText, IDictionary<string, object?> parameters, string operationName)
         {
             var conn = _context.Database.GetDbConnection();
             bool wasClosed = conn.State != System.Data.ConnectionState.Open;
@@ -414,10 +416,10 @@ namespace GPC.Boost.SpendX.Repository
                 {
                     cmd.Transaction = _context.Database.CurrentTransaction.GetDbTransaction();
                 }
-                cmd.CommandText = "CALL public.sp_update_event_offer_header(@p_offer_id, @p_offer_no, @p_offer_type_id)";
+                cmd.CommandText = commandText;
                 cmd.CommandTimeout = 600;
 
-                void AddParam(string name, object? value)
+                foreach (var (name, value) in parameters)
                 {
                     var param = cmd.CreateParameter();
                     param.ParameterName = name.StartsWith("@") ? name : "@" + name;
@@ -425,16 +427,12 @@ namespace GPC.Boost.SpendX.Repository
                     cmd.Parameters.Add(param);
                 }
 
-                AddParam("p_offer_id", offerId);
-                AddParam("p_offer_no", offerNo);
-                AddParam("p_offer_type_id", offerTypeId);
-
                 await cmd.ExecuteNonQueryAsync();
                 return true;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error while calculating SpendX event offer header: {Message}", ex.Message);
+                _logger.LogWarning(ex, "Error while executing {Operation}: {Message}", operationName, ex.Message);
                 return false;
             }
             finally

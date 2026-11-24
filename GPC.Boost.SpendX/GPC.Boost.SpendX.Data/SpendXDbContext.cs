@@ -121,16 +121,16 @@ namespace GPC.Boost.SpendX.Data
                 entity.Property(e => e.ForecastCost).HasPrecision(19, 5).HasColumnName("forecastCost");
                 entity.Property(e => e.ForecastSales).HasPrecision(19, 5).HasColumnName("forecastSales");
                 entity.Property(e => e.ForecastTradeMargin).HasPrecision(19, 5).HasColumnName("forecastTradeMargin");
-                entity.Property(e => e.ForecastTradeMarginDollar).HasPrecision(19, 5).HasColumnName("forecastTradeMarginDollar");
+                entity.Property(e => e.ForecastTradeMarginDollar).HasPrecision(19, 5).HasColumnName("forecastTradeMargin$");
                 entity.Property(e => e.ForecastTmPercent).HasPrecision(19, 5).HasColumnName("forecastTmPercent");
-                entity.Property(e => e.ForecastTradeMarginPercent).HasPrecision(19, 5).HasColumnName("forecastTradeMarginPercent");
+                entity.Property(e => e.ForecastTradeMarginPercent).HasPrecision(19, 5).HasColumnName("forecastTradeMargin%");
                 entity.Property(e => e.IncrementalSales).HasPrecision(19, 5).HasColumnName("incrementalSales");
-                entity.Property(e => e.IncrementalSalesDollar).HasPrecision(19, 5).HasColumnName("incrementalSalesDollar");
+                entity.Property(e => e.IncrementalSalesDollar).HasPrecision(19, 5).HasColumnName("incrementalSales$");
                 entity.Property(e => e.IncrementalTm).HasPrecision(19, 5).HasColumnName("incrementalTm");
-                entity.Property(e => e.IncrementalTmDollar).HasPrecision(19, 5).HasColumnName("incrementalTmDollar");
+                entity.Property(e => e.IncrementalTmDollar).HasPrecision(19, 5).HasColumnName("incrementalTm$");
                 entity.Property(e => e.TotalSupplierIncome).HasPrecision(19, 5).HasColumnName("totalSupplierIncome");
-                entity.Property(e => e.TotalScanSupportDollar).HasPrecision(19, 5).HasColumnName("totalScanSupportDollar");
-                entity.Property(e => e.TotalScanSupportPercent).HasPrecision(19, 5).HasColumnName("totalScanSupportPercent");
+                entity.Property(e => e.TotalScanSupportDollar).HasPrecision(19, 5).HasColumnName("totalScanSupport$");
+                entity.Property(e => e.TotalScanSupportPercent).HasPrecision(19, 5).HasColumnName("totalScanSupport%");
 
                 // Summary Pricing
                 entity.Property(e => e.EverydayPrice).HasPrecision(19, 5).HasColumnName("everydayPrice");
@@ -209,12 +209,13 @@ namespace GPC.Boost.SpendX.Data
                 entity.Property(e => e.IncrementalForecast).HasColumnName("incrementalForecast");
                 entity.Property(e => e.ForecastCost).HasPrecision(19, 5).HasColumnName("forecastCost");
                 entity.Property(e => e.ForecastSales).HasPrecision(19, 5).HasColumnName("forecastSales");
-                entity.Property(e => e.ForecastTradeMarginDollar).HasPrecision(19, 5).HasColumnName("forecastTradeMarginDollar");
-                entity.Property(e => e.ForecastTradeMarginPercent).HasPrecision(19, 5).HasColumnName("forecastTradeMarginPercent");
-                entity.Property(e => e.EverydayTradeMarginDollar).HasPrecision(19, 5).HasColumnName("everydayTradeMarginDollar");
-                entity.Property(e => e.EverydayTradeMarginPercent).HasPrecision(19, 5).HasColumnName("everydayTradeMarginPercent");
+                entity.Property(e => e.ForecastTradeMarginDollar).HasPrecision(19, 5).HasColumnName("forecastTradeMargin$");
+                entity.Property(e => e.ForecastTradeMarginPercent).HasPrecision(19, 5).HasColumnName("forecastTradeMargin%");
+                entity.Property(e => e.EverydayTradeMarginDollar).HasPrecision(19, 5).HasColumnName("everydayTradeMargin$");
+                entity.Property(e => e.EverydayTradeMarginPercent).HasPrecision(19, 5).HasColumnName("everydayTradeMargin%");
                 entity.Property(e => e.IncrementalSales).HasPrecision(19, 5).HasColumnName("incrementalSales");
-                entity.Property(e => e.IncrementalTradeDollar).HasPrecision(19, 5).HasColumnName("incrementalTradeDollar");
+                entity.Property(e => e.IncrementalTradeDollar).HasPrecision(19, 5).HasColumnName("incrementalTrade$");
+                entity.Property(e => e.IsCategoryForecastLocked).HasColumnName("isCategoryForecastLocked");
 
                 entity.Property(e => e.ScanSupportDollar).HasPrecision(19, 5).HasColumnName("scanSupport$");
                 entity.Property(e => e.ScanSupportValue).HasPrecision(19, 5).HasColumnName("scanSupportValue");
@@ -271,7 +272,7 @@ namespace GPC.Boost.SpendX.Data
             modelBuilder.Entity<TMudMap>(entity =>
             {
                 entity.ToTable("tmudmap");
-                entity.HasKey(e => e.MudMapId).HasName("pk_tmudmap");
+                entity.HasKey(e => new { e.PageId, e.PositionId }).HasName("pk_tmudmap");
 
                 entity.Property(e => e.MudMapId).ValueGeneratedOnAdd().HasColumnName("mudMapId");
                 entity.Property(e => e.EventId).HasColumnName("eventId");

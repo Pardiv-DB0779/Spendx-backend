@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using GPC.Boost.SpendX.Domain.Enums;
 using GPC.Boost.SpendX.Domain.Models;
 using GPC.Boost.SpendX.Dto.RequestDto;
 using GPC.Boost.SpendX.Dto.ResponseDto;
@@ -124,10 +125,10 @@ namespace GPC.Boost.SpendX.Service
                 }
 
                 // Populate offer header & handle Loyalty Variant (Item 5)
-                bool isLoyal = request.OfferTypeId == 118 || request.IsRewards;
+                bool isLoyal = request.OfferTypeId == (int)OfferType.SpendXGetYLoyal || request.IsRewards;
                 offer.EventId = request.EventId;
                 offer.OfferNumber = request.OfferNo > 0 ? request.OfferNo : 1;
-                offer.OfferTypeId = isLoyal ? 118 : 18;
+                offer.OfferTypeId = isLoyal ? (int)OfferType.SpendXGetYLoyal : (int)OfferType.SpendXGetY;
                 offer.OfferType = isLoyal ? "SPEND X GET Y% OFF - LOYAL" : "SPEND X GET Y% OFF";
                 offer.CommercialOfferType = offer.OfferType;
 
@@ -183,14 +184,14 @@ namespace GPC.Boost.SpendX.Service
                 // Highest nominal tier discount % for Advertised Price (BRD Item 1)
                 decimal maxDiscountPct = Math.Max(offer.SavePct1, Math.Max(offer.SavePct2 ?? 0m, offer.SavePct3 ?? 0m));
 
-                // Calculate promotional duration in days from request StartDate and EndDate
-                int durationDays = 14;
+                // Calculate promotional duration in days from request StartDate and EndDate (no hardcoded fallback)
+                int durationDays = 0;
                 if (!string.IsNullOrWhiteSpace(request.StartDate) && !string.IsNullOrWhiteSpace(request.EndDate)
                     && DateTime.TryParse(request.StartDate, out var start)
                     && DateTime.TryParse(request.EndDate, out var end)
                     && end >= start)
                 {
-                    durationDays = Math.Max(1, (int)(end.Date - start.Date).TotalDays + 1);
+                    durationDays = (int)(end.Date - start.Date).TotalDays + 1;
                 }
 
                 // 3. Populate teventofferdetail records copying ALL helper attributes from tproducts
@@ -199,7 +200,9 @@ namespace GPC.Boost.SpendX.Service
 
                 foreach (var p in eligibleProducts)
                 {
-                    decimal edUnits = Math.Round(((p.AverageMonthlySales ?? 30m) / 30m) * durationDays, 2);
+                    decimal edUnits = durationDays > 0 && p.AverageMonthlySales.HasValue
+                        ? Math.Round((p.AverageMonthlySales.Value / 30m) * durationDays, 2)
+                        : 0m;
                     decimal incrementalUnits = Math.Round(edUnits * (incPct / 100m), 0);
                     decimal forecastUnits = edUnits + incrementalUnits;
 
@@ -338,6 +341,8 @@ namespace GPC.Boost.SpendX.Service
 
 
 
+
+
         public async Task<SpendXOfferDto> GetEventOfferAsync(GetEventOfferRequestDto request)
         {
             var response = new SpendXOfferDto();
@@ -365,7 +370,7 @@ namespace GPC.Boost.SpendX.Service
                     return response;
                 }
 
-                var details = await _repository.GetOfferDetailsAsync(offer.OfferId, offer.OfferNumber);
+                var (repPartNo, storeSoh, dcSoh) = await _repository.GetOfferDetailSummaryAsync(offer.OfferId, offer.OfferNumber);
 
                 decimal gst = offer.Country.ToUpper() == "NZ" ? 0.15m : 0.10m;
                 bool isTiered = offer.Spend2.HasValue && offer.Spend2.Value > 0;
@@ -385,7 +390,7 @@ namespace GPC.Boost.SpendX.Service
                     Brand = offer.Brand,
                     IsRewards = offer.IsRewards ?? false,
                     IsTiered = isTiered,
-                    RepresentativePartNumber = details.FirstOrDefault()?.PartNo,
+                    RepresentativePartNumber = repPartNo,
                     Spend1 = offer.Spend1,
                     SavePct1 = offer.SavePct1,
                     Spend2 = isTiered ? offer.Spend2 : null,
@@ -421,8 +426,8 @@ namespace GPC.Boost.SpendX.Service
                     ForecastUnits = offer.ForecastUnits ?? 0,
                     IncrementalUnits = offer.IncrementalUnits ?? 0,
                     EverydayUnits = offer.EverydayUnits ?? 0,
-                    StoreSOH = details.Sum(d => d.StockOnHandStore ?? 0),
-                    DcSOH = details.Sum(d => d.StockOnHandDc ?? 0)
+                    StoreSOH = storeSoh,
+                    DcSOH = dcSoh
                 };
 
                 // Pricing
@@ -494,7 +499,7 @@ namespace GPC.Boost.SpendX.Service
                 // Item 5: Loyalty Variant Swap & Auto-Naming (Respect user toggle)
                 bool isLoyal = request.Overview.IsRewards;
                 offer.IsRewards = isLoyal;
-                offer.OfferTypeId = isLoyal ? 118 : 18;
+                offer.OfferTypeId = isLoyal ? (int)OfferType.SpendXGetYLoyal : (int)OfferType.SpendXGetY;
                 offer.OfferType = isLoyal ? "SPEND X GET Y% OFF - LOYAL" : "SPEND X GET Y% OFF";
                 offer.CommercialOfferType = offer.OfferType;
 
