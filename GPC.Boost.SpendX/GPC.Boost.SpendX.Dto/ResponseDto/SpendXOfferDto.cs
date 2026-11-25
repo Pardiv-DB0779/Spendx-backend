@@ -16,7 +16,6 @@ namespace GPC.Boost.SpendX.Dto.ResponseDto
         public string? OfferName { get; set; }
         public string? Brand { get; set; }
         public bool Loyalty { get; set; }
-        public bool IsRewards { get => Loyalty; set => Loyalty = value; }
         public bool? IsTiered { get; set; }
         public string? RepresentativePartNumber { get; set; }
 

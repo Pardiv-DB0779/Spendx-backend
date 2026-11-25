@@ -136,8 +136,8 @@ namespace GPC.Boost.SpendX.Service
                     offer = new TEventOffer();
                 }
 
-                // Populate offer header & handle Loyalty Variant (Item 5)
-                bool isLoyal = request.OfferTypeId == (int)OfferType.SpendXGetYLoyal || request.IsRewards;
+                // Populate offer header & handle Loyalty Variant (OfferTypeId 118)
+                bool isLoyal = request.OfferTypeId == (int)OfferType.SpendXGetYLoyal;
                 offer.EventId = request.EventId;
                 offer.OfferNumber = request.OfferNo > 0 ? request.OfferNo : 1;
                 offer.OfferTypeId = isLoyal ? (int)OfferType.SpendXGetYLoyal : (int)OfferType.SpendXGetY;
@@ -205,8 +205,8 @@ namespace GPC.Boost.SpendX.Service
                     PagePosition = request.PositionId
                 }).ToList();
 
-                // 4. Save to Repository (Pass isReserved flag only if user explicitly requested)
-                var (success, offerId) = await _repository.SaveOrUpdateSpendXOfferAsync(offer, details, isUpdate, request.IsReserved);
+                // 4. Save to Repository
+                var (success, offerId) = await _repository.SaveOrUpdateSpendXOfferAsync(offer, details, isUpdate);
                 if (success)
                 {
                     // Save or update search history in tEventOfferSearchHistory
@@ -313,7 +313,7 @@ namespace GPC.Boost.SpendX.Service
                     OfferType = offer.OfferType,
                     OfferName = offer.OfferName,
                     Brand = offer.Brand,
-                    IsRewards = offer.IsRewards ?? false,
+                    Loyalty = offer.IsRewards ?? false,
                     IsTiered = isTiered,
                     RepresentativePartNumber = repPartNo,
                     Spend1 = offer.Spend1,
@@ -421,8 +421,8 @@ namespace GPC.Boost.SpendX.Service
                     return response;
                 }
 
-                // Item 5: Loyalty Variant Swap & Auto-Naming (Respect user toggle)
-                bool isLoyal = request.Overview.IsRewards;
+                // Loyalty Variant Swap & Auto-Naming (Respect user toggle)
+                bool isLoyal = request.Overview.Loyalty;
                 offer.IsRewards = isLoyal;
                 offer.OfferTypeId = isLoyal ? (int)OfferType.SpendXGetYLoyal : (int)OfferType.SpendXGetY;
                 offer.OfferType = isLoyal ? "SPEND X GET Y% OFF - LOYAL" : "SPEND X GET Y% OFF";
@@ -499,7 +499,7 @@ namespace GPC.Boost.SpendX.Service
                 offer.UpdatedBy = request.UserId;
                 offer.UpdatedAt = DateTime.UtcNow;
 
-                bool success = await _repository.UpdateOfferHeaderOverviewAsync(offer);
+                bool success = await _repository.UpdateOfferHeaderOverviewAsync(offer, request.IsReserved);
                 if (success)
                 {
                     // Item 7: Return updated financial rollup directly

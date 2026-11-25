@@ -409,7 +409,7 @@ namespace GPC.Boost.SpendX.Tests.Services
             };
 
             _repository.GetOfferByIdAsync(100, 1).Returns(existingOffer, updatedOffer);
-            _repository.UpdateOfferHeaderOverviewAsync(Arg.Any<TEventOffer>()).Returns(true);
+            _repository.UpdateOfferHeaderOverviewAsync(Arg.Any<TEventOffer>(), Arg.Any<bool?>()).Returns(true);
 
             // Act
             var result = await _service.SaveEventOfferOverviewAsync(request);
@@ -436,7 +436,7 @@ namespace GPC.Boost.SpendX.Tests.Services
 
             var existingOffer = new TEventOffer { OfferId = 100, OfferNumber = 1 };
             _repository.GetOfferByIdAsync(100, 1).Returns(existingOffer);
-            _repository.UpdateOfferHeaderOverviewAsync(Arg.Any<TEventOffer>()).Returns(false);
+            _repository.UpdateOfferHeaderOverviewAsync(Arg.Any<TEventOffer>(), Arg.Any<bool?>()).Returns(false);
 
             // Act
             var result = await _service.SaveEventOfferOverviewAsync(request);

@@ -15,6 +15,7 @@ namespace GPC.Boost.SpendX.Dto.RequestDto
         public string? UserId { get; set; }
         public string? Username { get => UserId; set => UserId = value; }
         public string? CreatedBy { get => UserId; set => UserId = value; }
+        public bool? IsReserved { get; set; }
 
         public SpendXOverviewDto Overview { get; set; } = new();
         public SpendXOfferInfoDto OfferInfo { get; set; } = new();

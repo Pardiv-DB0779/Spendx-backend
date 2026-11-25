@@ -21,7 +21,7 @@ namespace GPC.Boost.SpendX.Repository
         Task<TEventOffer?> GetOfferByPositionAsync(int eventId, int pageId, int positionId);
         Task<List<TEventOfferDetail>> GetOfferDetailsAsync(int offerId, int offerNo = 1);
         Task<(string? PartNumber, decimal StoreSOH, decimal DcSOH)> GetOfferDetailSummaryAsync(int offerId, int offerNo = 1);
-        Task<bool> UpdateOfferHeaderOverviewAsync(TEventOffer offer);
+        Task<bool> UpdateOfferHeaderOverviewAsync(TEventOffer offer, bool? isReserved = null);
         Task<bool> AddEventOfferSearchHistoryAsync(TEventOfferSearchHistory searchHistory);
         Task<TEventOfferSearchHistory?> GetEventOfferSearchHistoryAsync(int eventId, int pageId, int positionId, int offerId, int offerNumber);
         Task<bool> UpdateEventOfferSearchHistoryAsync(TEventOfferSearchHistory searchHistory);
@@ -190,7 +190,7 @@ namespace GPC.Boost.SpendX.Repository
             return (null, 0m, 0m);
         }
 
-        public async Task<bool> UpdateOfferHeaderOverviewAsync(TEventOffer offer)
+        public async Task<bool> UpdateOfferHeaderOverviewAsync(TEventOffer offer, bool? isReserved = null)
         {
             await using var tx = await _context.Database.BeginTransactionAsync();
             try
@@ -202,6 +202,10 @@ namespace GPC.Boost.SpendX.Repository
 
                 if (mudMap != null)
                 {
+                    if (isReserved.HasValue)
+                    {
+                        mudMap.IsReserved = isReserved.Value;
+                    }
                     SyncMudMapFromOffer(mudMap, offer);
                 }
 

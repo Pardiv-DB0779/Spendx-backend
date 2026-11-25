@@ -46,9 +46,7 @@ namespace GPC.Boost.SpendX.Dto.RequestDto
         public string? UserId { get; set; }
         public string? Username { get => UserId; set => UserId = value; }
         public string? CreatedBy { get => UserId; set => UserId = value; }
-        public bool IsReserved { get; set; } = false;
         public string? PageSelection { get; set; }
-        public bool IsRewards { get; set; } = false;
 
         // Brand-based selection (Can come from root or from Search.ProductBrand)
         public string? ProductBrand { get; set; }
