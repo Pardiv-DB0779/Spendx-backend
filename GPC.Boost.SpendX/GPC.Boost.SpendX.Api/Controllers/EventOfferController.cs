@@ -62,7 +62,6 @@ namespace GPC.Boost.SpendX.Api.Controllers
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "EventOffer/CreateEventOffer")] HttpRequestData req)
         {
             _logger.LogInformation("AddEventOffer triggered for SpendX");
-            var response = req.CreateResponse();
 
             try
             {
@@ -71,42 +70,31 @@ namespace GPC.Boost.SpendX.Api.Controllers
 
                 if (request == null)
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "BAD_REQUEST", Message = "Payload cannot be null." });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto { ErrorCode = "BAD_REQUEST", Message = "Payload cannot be null." });
                 }
 
-                
                 var valResult = await _offerValidator.ValidateAsync(request);
                 if (!valResult.IsValid)
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto
                     {
                         ErrorCode = "VALIDATION_FAILED",
                         Message = string.Join("; ", valResult.Errors.Select(e => e.ErrorMessage))
                     });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
                 }
 
                 var result = await _spendXService.AddEventOfferAsync(request);
                 if (result.Error != null)
                 {
-                    await response.WriteAsJsonAsync(result);
-                    response.StatusCode = HttpStatusCode.InternalServerError;
-                    return response;
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, result);
                 }
 
-                await response.WriteAsJsonAsync(result);
-                response.StatusCode = HttpStatusCode.OK;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.OK, result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unhandled exception in AddEventOffer: {Message}", ex.Message);
-                await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while processing the request." });
-                response.StatusCode = HttpStatusCode.InternalServerError;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while processing the request." });
             }
         }
 
@@ -121,7 +109,6 @@ namespace GPC.Boost.SpendX.Api.Controllers
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "EventOffer/SearchByBrand")] HttpRequestData req)
         {
             _logger.LogInformation("SearchByBrand triggered for SpendX");
-            var response = req.CreateResponse();
 
             try
             {
@@ -135,26 +122,20 @@ namespace GPC.Boost.SpendX.Api.Controllers
                 var valResult = await _searchByBrandValidator.ValidateAsync(request);
                 if (!valResult.IsValid)
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto
                     {
                         ErrorCode = "VALIDATION_FAILED",
                         Message = string.Join("; ", valResult.Errors.Select(e => e.ErrorMessage))
                     });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
                 }
 
                 var results = await _spendXService.SearchProductsByBrandAsync(request.Brand, request.Country);
-                await response.WriteAsJsonAsync(results);
-                response.StatusCode = HttpStatusCode.OK;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.OK, results);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unhandled exception in SearchByBrand: {Message}", ex.Message);
-                await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while searching products by brand." });
-                response.StatusCode = HttpStatusCode.InternalServerError;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while searching products by brand." });
             }
         }
 
@@ -174,7 +155,6 @@ namespace GPC.Boost.SpendX.Api.Controllers
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "EventOffer/GetEventOffer")] HttpRequestData req)
         {
             _logger.LogInformation("GetEventOffer triggered for SpendX");
-            var response = req.CreateResponse();
 
             try
             {
@@ -192,29 +172,21 @@ namespace GPC.Boost.SpendX.Api.Controllers
 
                 if ((!request.OfferId.HasValue || request.OfferId.Value <= 0) && (request.PagePosition <= 0 || request.PageId <= 0))
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "BAD_REQUEST", Message = "OfferId or valid PageId and PagePosition is required." });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto { ErrorCode = "BAD_REQUEST", Message = "OfferId or valid PageId and PagePosition is required." });
                 }
 
                 var result = await _spendXService.GetEventOfferAsync(request);
                 if (result.Error != null)
                 {
-                    await response.WriteAsJsonAsync(result);
-                    response.StatusCode = HttpStatusCode.InternalServerError;
-                    return response;
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, result);
                 }
 
-                await response.WriteAsJsonAsync(result);
-                response.StatusCode = HttpStatusCode.OK;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.OK, result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unhandled exception in GetEventOffer: {Message}", ex.Message);
-                await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while retrieving the event offer." });
-                response.StatusCode = HttpStatusCode.InternalServerError;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while retrieving the event offer." });
             }
         }
 
@@ -228,7 +200,6 @@ namespace GPC.Boost.SpendX.Api.Controllers
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "EventOffer/SaveEventOfferOverview")] HttpRequestData req)
         {
             _logger.LogInformation("SaveEventOfferOverviewAsync triggered for SpendX");
-            var response = req.CreateResponse();
 
             try
             {
@@ -237,41 +208,31 @@ namespace GPC.Boost.SpendX.Api.Controllers
 
                 if (request == null)
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "BAD_REQUEST", Message = "Payload cannot be null." });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto { ErrorCode = "BAD_REQUEST", Message = "Payload cannot be null." });
                 }
 
                 var valResult = await _overviewValidator.ValidateAsync(request);
                 if (!valResult.IsValid)
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto
                     {
                         ErrorCode = "VALIDATION_FAILED",
                         Message = string.Join("; ", valResult.Errors.Select(e => e.ErrorMessage))
                     });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
                 }
 
                 var result = await _spendXService.SaveEventOfferOverviewAsync(request);
                 if (result.Error != null)
                 {
-                    await response.WriteAsJsonAsync(result);
-                    response.StatusCode = HttpStatusCode.InternalServerError;
-                    return response;
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, result);
                 }
 
-                await response.WriteAsJsonAsync(result);
-                response.StatusCode = HttpStatusCode.OK;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.OK, result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unhandled exception in SaveEventOfferOverviewAsync: {Message}", ex.Message);
-                await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while saving the event offer overview." });
-                response.StatusCode = HttpStatusCode.InternalServerError;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while saving the event offer overview." });
             }
         }
 
@@ -300,7 +261,6 @@ namespace GPC.Boost.SpendX.Api.Controllers
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "EventOffer/EventOfferDataView")] HttpRequestData req)
         {
             _logger.LogInformation("EventOfferDataView triggered for SpendX");
-            var response = req.CreateResponse();
 
             try
             {
@@ -338,33 +298,25 @@ namespace GPC.Boost.SpendX.Api.Controllers
                 var valResult = await _dataViewRequestValidator.ValidateAsync(request);
                 if (!valResult.IsValid)
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto
                     {
                         ErrorCode = "VALIDATION_FAILED",
                         Message = string.Join("; ", valResult.Errors.Select(e => e.ErrorMessage))
                     });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
                 }
 
                 var result = await _spendXService.GetDataViewAsync(request);
                 if (result.Error != null)
                 {
-                    await response.WriteAsJsonAsync(result);
-                    response.StatusCode = HttpStatusCode.InternalServerError;
-                    return response;
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, result);
                 }
 
-                await response.WriteAsJsonAsync(result);
-                response.StatusCode = HttpStatusCode.OK;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.OK, result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unhandled exception in EventOfferDataView: {Message}", ex.Message);
-                await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while retrieving data view." });
-                response.StatusCode = HttpStatusCode.InternalServerError;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while retrieving data view." });
             }
         }
 
@@ -378,7 +330,6 @@ namespace GPC.Boost.SpendX.Api.Controllers
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "EventOffer/PostEventOfferDataView")] HttpRequestData req)
         {
             _logger.LogInformation("PostEventOfferDataView triggered for SpendX");
-            var response = req.CreateResponse();
 
             try
             {
@@ -387,41 +338,31 @@ namespace GPC.Boost.SpendX.Api.Controllers
 
                 if (request == null)
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "BAD_REQUEST", Message = "Payload cannot be null." });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto { ErrorCode = "BAD_REQUEST", Message = "Payload cannot be null." });
                 }
 
                 var valResult = await _dataViewResponseValidator.ValidateAsync(request);
                 if (!valResult.IsValid)
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto
                     {
                         ErrorCode = "VALIDATION_FAILED",
                         Message = string.Join("; ", valResult.Errors.Select(e => e.ErrorMessage))
                     });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
                 }
 
                 var result = await _spendXService.PostDataViewAsync(request);
                 if (result.Error != null)
                 {
-                    await response.WriteAsJsonAsync(result);
-                    response.StatusCode = HttpStatusCode.InternalServerError;
-                    return response;
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, result);
                 }
 
-                await response.WriteAsJsonAsync(result);
-                response.StatusCode = HttpStatusCode.OK;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.OK, result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unhandled exception in PostEventOfferDataView: {Message}", ex.Message);
-                await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while saving data view." });
-                response.StatusCode = HttpStatusCode.InternalServerError;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while saving data view." });
             }
         }
 
@@ -435,7 +376,6 @@ namespace GPC.Boost.SpendX.Api.Controllers
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "EventOffer/MoveOffer")] HttpRequestData req)
         {
             _logger.LogInformation("MoveOffer triggered for SpendX");
-            var response = req.CreateResponse();
 
             try
             {
@@ -444,21 +384,17 @@ namespace GPC.Boost.SpendX.Api.Controllers
 
                 if (request == null)
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "BAD_REQUEST", Message = "Request payload cannot be null." });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto { ErrorCode = "BAD_REQUEST", Message = "Request payload cannot be null." });
                 }
 
                 var valResult = await _moveOfferValidator.ValidateAsync(request);
                 if (!valResult.IsValid)
                 {
-                    await response.WriteAsJsonAsync(new ErrorDto
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto
                     {
                         ErrorCode = "VALIDATION_FAILED",
                         Message = string.Join("; ", valResult.Errors.Select(e => e.ErrorMessage))
                     });
-                    response.StatusCode = HttpStatusCode.BadRequest;
-                    return response;
                 }
 
                 var result = await _spendXService.MoveOfferAsync(request);
@@ -470,21 +406,15 @@ namespace GPC.Boost.SpendX.Api.Controllers
                         "BAD_REQUEST" or "VALIDATION_FAILED" => HttpStatusCode.BadRequest,
                         _ => HttpStatusCode.InternalServerError
                     };
-                    await response.WriteAsJsonAsync(result);
-                    response.StatusCode = statusCode;
-                    return response;
+                    return await CreateJsonResponseAsync(req, statusCode, result);
                 }
 
-                await response.WriteAsJsonAsync(result);
-                response.StatusCode = HttpStatusCode.OK;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.OK, result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unhandled exception in MoveOffer: {Message}", ex.Message);
-                await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while moving offer." });
-                response.StatusCode = HttpStatusCode.InternalServerError;
-                return response;
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new ErrorDto { ErrorCode = "INTERNAL_ERROR", Message = "An unexpected error occurred while moving offer." });
             }
         }
 
@@ -496,72 +426,68 @@ namespace GPC.Boost.SpendX.Api.Controllers
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Validation failed")]
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.InternalServerError, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Internal server error")]
         public async Task<HttpResponseData> GetPricingExtract(
-        [Microsoft.Azure.Functions.Worker.HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "OutBound/GetPricingExtract")] HttpRequestData req)
-    {
-        _logger.LogInformation("GetPricingExtract triggered");
-        var response = req.CreateResponse();
-
-        try
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "OutBound/GetPricingExtract")] HttpRequestData req)
         {
-            var queryParams = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
-            var request = new PricingExtractRequestDto
-            {
-                EventId = int.TryParse(queryParams["eventId"], out var id) ? id : 0,
-                UserId = queryParams["UserId"]
-            };
-            _logger.LogInformation("GetPricingExtract received: EventId={EventId}, UserId={UserId}", request.EventId, request.UserId);
+            _logger.LogInformation("GetPricingExtract triggered");
 
-            var validationResult = await _pricingExtractValidator.ValidateAsync(request);
-            if (!validationResult.IsValid)
+            try
             {
-                _logger.LogWarning("Validation failed for GetPricingExtract: EventId={EventId}, Errors={Errors}", request.EventId, string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage)));
-                await response.WriteAsJsonAsync(new ErrorDto
+                var queryParams = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
+                var request = new PricingExtractRequestDto
                 {
-                    ErrorCode = "VALIDATION_FAILED",
-                    Message = string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage))
-                });
-                response.StatusCode = HttpStatusCode.BadRequest;
-                return response;
+                    EventId = int.TryParse(queryParams["eventId"], out var id) ? id : 0,
+                    UserId = queryParams["UserId"]
+                };
+                _logger.LogInformation("GetPricingExtract received: EventId={EventId}, UserId={UserId}", request.EventId, request.UserId);
+
+                var validationResult = await _pricingExtractValidator.ValidateAsync(request);
+                if (!validationResult.IsValid)
+                {
+                    _logger.LogWarning("Validation failed for GetPricingExtract: EventId={EventId}, Errors={Errors}", request.EventId, string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage)));
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto
+                    {
+                        ErrorCode = "VALIDATION_FAILED",
+                        Message = string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage))
+                    });
+                }
+
+                var result = await _spendXService.GetPricingExtractAsync(request.EventId, request.UserId);
+
+                if (result.Error != null)
+                {
+                    _logger.LogWarning("GetPricingExtract service error: EventId={EventId}, ErrorCode={ErrorCode}, Message={Message}",
+                        request.EventId, result.Error.ErrorCode, result.Error.Message);
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, result);
+                }
+
+                _logger.LogInformation("GetPricingExtract completed: EventId={EventId}", request.EventId);
+                return await CreateJsonResponseAsync(req, HttpStatusCode.OK, result);
             }
-
-            var result = await _spendXService.GetPricingExtractAsync(request.EventId, request.UserId);
-
-            if (result.Error != null)
+            catch (FluentValidation.ValidationException vex)
             {
-                _logger.LogWarning("GetPricingExtract service error: EventId={EventId}, ErrorCode={ErrorCode}, Message={Message}",
-                    request.EventId, result.Error.ErrorCode, result.Error.Message);
-                await response.WriteAsJsonAsync(result);
-                response.StatusCode = HttpStatusCode.InternalServerError;
-                return response;
+                _logger.LogWarning(vex, "Validation failed in GetPricingExtract");
+                return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ErrorDto { ErrorCode = "BadRequest", Message = "Validation failed.", Detail = string.Join("; ", vex.Errors.Select(e => e.ErrorMessage)), Timestamp = DateTime.Now });
             }
-            _logger.LogInformation("GetPricingExtract completed: EventId={EventId}", request.EventId);
-            await response.WriteAsJsonAsync(result);
-            response.StatusCode = HttpStatusCode.OK;
-            return response;
-        }
-        catch (FluentValidation.ValidationException vex)
-        {
-            _logger.LogWarning(vex, "Validation failed in GetPricingExtract");
-            await response.WriteAsJsonAsync(new ErrorDto { ErrorCode = "BadRequest", Message = "Validation failed.", Detail = string.Join("; ", vex.Errors.Select(e => e.ErrorMessage)), Timestamp = DateTime.Now });
-            response.StatusCode = HttpStatusCode.BadRequest;
-            return response;
-        }
-        catch (Exception ex)
-        {
-            var error = new ErrorDto
+            catch (Exception ex)
             {
-                ErrorCode = "OUTBOUND_PRICING_EXTRACT_ERROR",
-                Message = "An unexpected error occurred while retrieving the pricing extract.",
-                Timestamp = DateTime.Now
-            };
+                var error = new ErrorDto
+                {
+                    ErrorCode = "OUTBOUND_PRICING_EXTRACT_ERROR",
+                    Message = "An unexpected error occurred while retrieving the pricing extract.",
+                    Timestamp = DateTime.Now
+                };
 
-            _logger.LogError(ex, "GetPricingExtract failed. ExceptionType: {ExceptionType}, InnerException: {InnerMessage}", ex.GetType().Name, ex.InnerException?.Message);
+                _logger.LogError(ex, "GetPricingExtract failed. ExceptionType: {ExceptionType}, InnerException: {InnerMessage}", ex.GetType().Name, ex.InnerException?.Message);
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, error);
+            }
+        }
 
-
-            await response.WriteAsJsonAsync(error);
-            response.StatusCode = HttpStatusCode.InternalServerError;
+        private static async Task<HttpResponseData> CreateJsonResponseAsync<T>(HttpRequestData req, HttpStatusCode statusCode, T payload)
+        {
+            var response = req.CreateResponse();
+            response.StatusCode = statusCode;
+            await response.WriteAsJsonAsync(payload);
             return response;
         }
-    }
     }
 }
