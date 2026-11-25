@@ -53,20 +53,6 @@ namespace GPC.Boost.SpendX.Dto.RequestDto
         // Brand-based selection (Can come from root or from Search.ProductBrand)
         public string? ProductBrand { get; set; }
 
-        // Multi-tiering flag (SpendX supports 1-3 tiers; tiers 2 and 3 require IsTiered == true)
-        public bool? IsTiered { get; set; }
-
-        // SpendX 3-Tier Configuration
-        public decimal Spend1 { get; set; }
-        public decimal SavePct1 { get; set; }
-        public decimal? Spend2 { get; set; }
-        public decimal? SavePct2 { get; set; }
-        public decimal? Spend3 { get; set; }
-        public decimal? SavePct3 { get; set; }
-
-        public decimal IncrementalPercentage { get; set; }
-        public decimal? SpacePurchase { get; set; }
-
         // Optional list of explicitly selected SKUs or unselected SKUs
         public List<string>? SelectedSKUs { get; set; }
         public List<string>? UnSelectedSKUs { get; set; }

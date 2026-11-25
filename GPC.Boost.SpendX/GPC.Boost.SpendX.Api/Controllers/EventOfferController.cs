@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -10,7 +11,9 @@ using GPC.Boost.SpendX.Dto.ResponseDto;
 using GPC.Boost.SpendX.Service;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Logging;
+using Microsoft.OpenApi.Models;
 using Newtonsoft.Json;
 
 namespace GPC.Boost.SpendX.Api.Controllers
@@ -50,6 +53,11 @@ namespace GPC.Boost.SpendX.Api.Controllers
         }
 
         [Function("AddEventOffer")]
+        [OpenApiOperation(operationId: "AddEventOffer", tags: new[] { "EventOffer" }, Summary = "Create or update a SpendX event offer", Description = "Creates or updates a SpendX offer (Spend X Get Y% Off / Loyal) and calculates initial detail lines.")]
+        [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(EventOfferRequestDto), Required = true, Description = "SpendX event offer creation/update request")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(CreateEventOfferResponseDto), Description = "Offer created/updated successfully")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Validation failed or invalid request")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.InternalServerError, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Internal server error")]
         public async Task<HttpResponseData> AddEventOffer(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "EventOffer/CreateEventOffer")] HttpRequestData req)
         {
@@ -103,6 +111,12 @@ namespace GPC.Boost.SpendX.Api.Controllers
         }
 
         [Function("SearchByBrand")]
+        [OpenApiOperation(operationId: "SearchByBrand", tags: new[] { "EventOffer" }, Summary = "Search products by brand", Description = "Searches active products in tproducts matching the given brand(s) and country.")]
+        [OpenApiParameter(name: "brand", In = ParameterLocation.Query, Required = true, Type = typeof(string), Description = "Comma-separated product brand(s)")]
+        [OpenApiParameter(name: "country", In = ParameterLocation.Query, Required = false, Type = typeof(string), Description = "Country code (AU or NZ, default AU)")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(List<ProductSearchResultDto>), Description = "Matching products")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Validation failed")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.InternalServerError, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Internal server error")]
         public async Task<HttpResponseData> SearchByBrand(
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "EventOffer/SearchByBrand")] HttpRequestData req)
         {
@@ -145,6 +159,17 @@ namespace GPC.Boost.SpendX.Api.Controllers
         }
 
         [Function("GetEventOffer")]
+        [OpenApiOperation(operationId: "GetEventOffer", tags: new[] { "EventOffer" }, Summary = "Get SpendX event offer details", Description = "Retrieves the SpendX offer overview, tiers, forecasting, pricing, and merchandising callouts.")]
+        [OpenApiParameter(name: "EventId", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Event ID")]
+        [OpenApiParameter(name: "OfferId", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Offer ID")]
+        [OpenApiParameter(name: "OfferNo", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Offer Number (default 1)")]
+        [OpenApiParameter(name: "PageId", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Page ID")]
+        [OpenApiParameter(name: "PagePosition", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Page Position")]
+        [OpenApiParameter(name: "OfferTypeId", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Offer Type ID (18 or 118)")]
+        [OpenApiParameter(name: "Country", In = ParameterLocation.Query, Required = false, Type = typeof(string), Description = "Country code (AU or NZ)")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(SpendXOfferDto), Description = "SpendX offer details")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Invalid parameters")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.InternalServerError, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Internal server error")]
         public async Task<HttpResponseData> GetEventOffer(
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "EventOffer/GetEventOffer")] HttpRequestData req)
         {
@@ -194,6 +219,11 @@ namespace GPC.Boost.SpendX.Api.Controllers
         }
 
         [Function("SaveEventOfferOverview")]
+        [OpenApiOperation(operationId: "SaveEventOfferOverview", tags: new[] { "EventOffer" }, Summary = "Save SpendX offer overview", Description = "Updates SpendX offer tiers, overview, pricing, and merchandising flags.")]
+        [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(SpendXOverviewRequestDto), Required = true, Description = "SpendX overview update payload")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(SpendXOverviewSaveResponseDto), Description = "Overview saved successfully")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Validation failed")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.InternalServerError, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Internal server error")]
         public async Task<HttpResponseData> SaveEventOfferOverview(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "EventOffer/SaveEventOfferOverview")] HttpRequestData req)
         {
@@ -246,6 +276,26 @@ namespace GPC.Boost.SpendX.Api.Controllers
         }
 
         [Function("EventOfferDataView")]
+        [OpenApiOperation(operationId: "EventOfferDataView", tags: new[] { "EventOffer" }, Summary = "Get SpendX offer data view", Description = "Retrieves paginated SKU-level pricing, forecasts, and tier details for an offer.")]
+        [OpenApiParameter(name: "EventId", In = ParameterLocation.Query, Required = true, Type = typeof(int), Description = "Event ID")]
+        [OpenApiParameter(name: "EventOfferId", In = ParameterLocation.Query, Required = true, Type = typeof(int), Description = "Offer ID")]
+        [OpenApiParameter(name: "OfferNo", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Offer Number (default 1)")]
+        [OpenApiParameter(name: "PageNumber", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Pagination page number (default 1)")]
+        [OpenApiParameter(name: "PageSize", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Pagination page size (default 100)")]
+        [OpenApiParameter(name: "Spend1", In = ParameterLocation.Query, Required = false, Type = typeof(decimal), Description = "Tier 1 spend threshold")]
+        [OpenApiParameter(name: "SavePct1", In = ParameterLocation.Query, Required = false, Type = typeof(decimal), Description = "Tier 1 save percentage")]
+        [OpenApiParameter(name: "Spend2", In = ParameterLocation.Query, Required = false, Type = typeof(decimal), Description = "Tier 2 spend threshold")]
+        [OpenApiParameter(name: "SavePct2", In = ParameterLocation.Query, Required = false, Type = typeof(decimal), Description = "Tier 2 save percentage")]
+        [OpenApiParameter(name: "Spend3", In = ParameterLocation.Query, Required = false, Type = typeof(decimal), Description = "Tier 3 spend threshold")]
+        [OpenApiParameter(name: "SavePct3", In = ParameterLocation.Query, Required = false, Type = typeof(decimal), Description = "Tier 3 save percentage")]
+        [OpenApiParameter(name: "IncrementalPercent", In = ParameterLocation.Query, Required = false, Type = typeof(decimal), Description = "Incremental forecast percentage")]
+        [OpenApiParameter(name: "SpacePurchase", In = ParameterLocation.Query, Required = false, Type = typeof(decimal), Description = "Space purchase amount")]
+        [OpenApiParameter(name: "SKUs", In = ParameterLocation.Query, Required = false, Type = typeof(string), Description = "Comma-separated SKUs filter")]
+        [OpenApiParameter(name: "Brands", In = ParameterLocation.Query, Required = false, Type = typeof(string), Description = "Comma-separated brands filter")]
+        [OpenApiParameter(name: "isOfferEdited", In = ParameterLocation.Query, Required = false, Type = typeof(bool), Description = "Trigger recalculation")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(DataViewResponseDto), Description = "Paginated DataView response")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Validation failed")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.InternalServerError, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Internal server error")]
         public async Task<HttpResponseData> EventOfferDataView(
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "EventOffer/EventOfferDataView")] HttpRequestData req)
         {
@@ -319,6 +369,11 @@ namespace GPC.Boost.SpendX.Api.Controllers
         }
 
         [Function("PostEventOfferDataView")]
+        [OpenApiOperation(operationId: "PostEventOfferDataView", tags: new[] { "EventOffer" }, Summary = "Save SpendX offer data view", Description = "Updates SKU-level forecasts and scan support values and recalculates header rollups.")]
+        [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(DataViewResponseDto), Required = true, Description = "DataView SKU updates payload")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(DataviewCalculationsResponseDto), Description = "Updated header financial calculations")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Validation failed")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.InternalServerError, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Internal server error")]
         public async Task<HttpResponseData> PostEventOfferDataView(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "EventOffer/PostEventOfferDataView")] HttpRequestData req)
         {
@@ -371,6 +426,11 @@ namespace GPC.Boost.SpendX.Api.Controllers
         }
 
         [Function("MoveOffer")]
+        [OpenApiOperation(operationId: "MoveOffer", tags: new[] { "EventOffer" }, Summary = "Move SpendX offer position", Description = "Moves an offer from a source page/position to a target page/position atomically.")]
+        [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(MoveOfferRequestDto), Required = true, Description = "MoveOffer request payload")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(MoveOfferResponseDto), Description = "Offer moved successfully")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Validation failed")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.InternalServerError, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Internal server error")]
         public async Task<HttpResponseData> MoveOffer(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "EventOffer/MoveOffer")] HttpRequestData req)
         {
@@ -429,6 +489,12 @@ namespace GPC.Boost.SpendX.Api.Controllers
         }
 
         [Function("GetPricingExtract")]
+        [OpenApiOperation(operationId: "GetPricingExtract", tags: new[] { "EventOffer" }, Summary = "Get SpendX pricing extract", Description = "Generates the SpendX pricing extract partitioned into standard and loyal sheets.")]
+        [OpenApiParameter(name: "eventId", In = ParameterLocation.Query, Required = true, Type = typeof(int), Description = "Event ID")]
+        [OpenApiParameter(name: "UserId", In = ParameterLocation.Query, Required = false, Type = typeof(string), Description = "User ID")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(PricingExtractResponseDto), Description = "Pricing extract generated successfully")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Validation failed")]
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.InternalServerError, contentType: "application/json", bodyType: typeof(ErrorDto), Description = "Internal server error")]
         public async Task<HttpResponseData> GetPricingExtract(
         [Microsoft.Azure.Functions.Worker.HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "OutBound/GetPricingExtract")] HttpRequestData req)
     {

@@ -84,8 +84,6 @@ namespace GPC.Boost.SpendX.Tests.Controllers
                 OfferTypeId   = 18,
                 ProductBrand  = "Samsung",
                 Country       = "AU",
-                Spend1        = 100m,
-                SavePct1      = 5m,
                 PageNumber    = 1,
                 PositionId    = 1,
                 UserId        = "testuser"
@@ -125,7 +123,7 @@ namespace GPC.Boost.SpendX.Tests.Controllers
             var request = new EventOfferRequestDto
             {
                 EventId = 1, OfferTypeId = 18, ProductBrand = "Samsung",
-                Spend1 = 100m, SavePct1 = 5m, PageNumber = 1, PositionId = 1, UserId = "testuser"
+                PageNumber = 1, PositionId = 1, UserId = "testuser"
             };
 
             _spendXService.AddEventOfferAsync(Arg.Any<EventOfferRequestDto>())

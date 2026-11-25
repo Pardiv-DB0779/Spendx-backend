@@ -166,28 +166,6 @@ namespace GPC.Boost.SpendX.Service
                 offer.IsRewards = isLoyal;
                 offer.Page = request.PageNumber;
                 offer.PagePosition = request.PositionId;
-
-                // SpendX multi-tier logic: Tier 2 and Tier 3 require IsTiered == true
-                bool isTiered = request.IsTiered ?? (request.Spend2.HasValue && request.Spend2.Value > 0);
-                offer.Spend1 = request.Spend1;
-                offer.SavePct1 = request.SavePct1;
-                if (isTiered)
-                {
-                    offer.Spend2 = request.Spend2;
-                    offer.SavePct2 = request.SavePct2;
-                    offer.Spend3 = request.Spend3;
-                    offer.SavePct3 = request.SavePct3;
-                }
-                else
-                {
-                    offer.Spend2 = null;
-                    offer.SavePct2 = null;
-                    offer.Spend3 = null;
-                    offer.SavePct3 = null;
-                }
-
-                offer.IncrementalPercentage = request.IncrementalPercentage;
-                offer.SpacePurchase = request.SpacePurchase;
                 offer.UpdatedBy = request.UserId;
                 offer.UpdatedAt = DateTime.UtcNow;
 

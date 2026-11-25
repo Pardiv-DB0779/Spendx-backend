@@ -14,16 +14,14 @@ namespace GPC.Boost.SpendX.Dto.ResponseDto
         public string? Description { get; set; }
         public string? Brand { get; set; }
         public string Sku { get; set; } = string.Empty;
-        public decimal EdPriceGst { get; set; }
         public DateOnly? StartDate { get; set; }
         public DateOnly? EndDate { get; set; }
         public decimal Spend1 { get; set; }
-        public decimal? Spend2 { get; set; }
-        public decimal? Spend3 { get; set; }
         public decimal SavePct1 { get; set; }
+        public decimal? Spend2 { get; set; }
         public decimal? SavePct2 { get; set; }
+        public decimal? Spend3 { get; set; }
         public decimal? SavePct3 { get; set; }
-        public decimal AdvPriceGst { get; set; }
         public bool IsRewards { get; set; }
     }
 

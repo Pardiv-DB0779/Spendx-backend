@@ -39,59 +39,6 @@ namespace GPC.Boost.SpendX.Validation.Validators
                 .Must(x => !string.IsNullOrWhiteSpace(x.ProductBrand) || (x.Search?.ProductBrand != null && x.Search.ProductBrand.Any(b => !string.IsNullOrWhiteSpace(b))))
                 .WithMessage("At least one product brand must be specified (via ProductBrand or Search.ProductBrand).");
 
-            // SpendX 3-Tier Validation
-            RuleFor(x => x.Spend1)
-                .GreaterThan(0)
-                .WithMessage("Tier 1 Spend threshold must be greater than zero.")
-                .PrecisionScale(18, 2, false);
-
-            RuleFor(x => x.SavePct1)
-                .InclusiveBetween(0.01m, 100m)
-                .WithMessage("Tier 1 Save percentage must be between 0.01% and 100%.")
-                .PrecisionScale(5, 2, false);
-
-            When(x => (x.IsTiered == true) || x.Spend2.HasValue || x.SavePct2.HasValue, () =>
-            {
-                RuleFor(x => x.Spend2)
-                    .NotNull()
-                    .WithMessage("Tier 2 Spend threshold is required when multi-tier is enabled or Tier 2 discount is provided.")
-                    .GreaterThan(x => x.Spend1)
-                    .WithMessage("Tier 2 Spend must be strictly greater than Tier 1 Spend.")
-                    .PrecisionScale(18, 2, false);
-
-                RuleFor(x => x.SavePct2)
-                    .NotNull()
-                    .WithMessage("Tier 2 Save percentage is required when Tier 2 spend threshold is provided.")
-                    .InclusiveBetween(0.01m, 100m)
-                    .WithMessage("Tier 2 Save percentage must be between 0.01% and 100%.")
-                    .GreaterThan(x => x.SavePct1)
-                    .WithMessage("Tier 2 Save percentage must be greater than Tier 1 Save percentage.")
-                    .PrecisionScale(5, 2, false);
-            });
-
-            When(x => x.Spend3.HasValue || x.SavePct3.HasValue, () =>
-            {
-                RuleFor(x => x.Spend2)
-                    .NotNull()
-                    .WithMessage("Tier 2 must be configured before configuring Tier 3.");
-
-                RuleFor(x => x.Spend3)
-                    .NotNull()
-                    .WithMessage("Tier 3 Spend threshold is required when Tier 3 discount is provided.")
-                    .GreaterThan(x => x.Spend2!.Value)
-                    .WithMessage("Tier 3 Spend must be strictly greater than Tier 2 Spend.")
-                    .PrecisionScale(18, 2, false);
-
-                RuleFor(x => x.SavePct3)
-                    .NotNull()
-                    .WithMessage("Tier 3 Save percentage is required when Tier 3 spend threshold is provided.")
-                    .InclusiveBetween(0.01m, 100m)
-                    .WithMessage("Tier 3 Save percentage must be between 0.01% and 100%.")
-                    .GreaterThan(x => x.SavePct2!.Value)
-                    .WithMessage("Tier 3 Save percentage must be greater than Tier 2 Save percentage.")
-                    .PrecisionScale(5, 2, false);
-            });
-
             When(x => x.Details != null && x.Details.Count > 0, () =>
             {
                 RuleFor(x => x.Details)

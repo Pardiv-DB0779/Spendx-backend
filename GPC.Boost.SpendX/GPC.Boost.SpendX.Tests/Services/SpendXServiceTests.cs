@@ -124,9 +124,7 @@ namespace GPC.Boost.SpendX.Tests.Services
                 ProductBrand = "Bosch",
                 Country = "AU",
                 PositionId = 1,
-                OfferTypeId = 18,
-                Spend1 = 100m,
-                SavePct1 = 10m
+                OfferTypeId = 18
             };
 
             var products = new List<TProduct>
@@ -160,8 +158,6 @@ namespace GPC.Boost.SpendX.Tests.Services
                 Country = "AU",
                 PositionId = 1,
                 OfferTypeId = 18,
-                Spend1 = 100m,
-                SavePct1 = 10m,
                 PageNumber = 1,
                 UserId = "user1"
             };
@@ -200,8 +196,6 @@ namespace GPC.Boost.SpendX.Tests.Services
                 Country = "AU",
                 PositionId = 1,
                 OfferTypeId = 18,
-                Spend1 = 120m,
-                SavePct1 = 15m,
                 PageNumber = 1,
                 UserId = "user1"
             };

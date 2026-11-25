@@ -670,16 +670,14 @@ namespace GPC.Boost.SpendX.Repository
                     Description = reader.IsDBNull(reader.GetOrdinal("DESC")) ? null : reader.GetString(reader.GetOrdinal("DESC")),
                     Brand = reader.IsDBNull(reader.GetOrdinal("BRAND")) ? null : reader.GetString(reader.GetOrdinal("BRAND")),
                     Sku = reader.IsDBNull(reader.GetOrdinal("SKU")) ? string.Empty : reader.GetString(reader.GetOrdinal("SKU")),
-                    EdPriceGst = reader.IsDBNull(reader.GetOrdinal("EDPRICEGST")) ? 0m : reader.GetDecimal(reader.GetOrdinal("EDPRICEGST")),
                     StartDate = reader.IsDBNull(reader.GetOrdinal("STARTDTE")) ? null : DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("STARTDTE"))),
                     EndDate = reader.IsDBNull(reader.GetOrdinal("ENDDTE")) ? null : DateOnly.FromDateTime(reader.GetDateTime(reader.GetOrdinal("ENDDTE"))),
                     Spend1 = reader.IsDBNull(reader.GetOrdinal("SPEND1")) ? 0m : reader.GetDecimal(reader.GetOrdinal("SPEND1")),
-                    Spend2 = reader.IsDBNull(reader.GetOrdinal("SPEND2")) ? null : reader.GetDecimal(reader.GetOrdinal("SPEND2")),
-                    Spend3 = reader.IsDBNull(reader.GetOrdinal("SPEND3")) ? null : reader.GetDecimal(reader.GetOrdinal("SPEND3")),
                     SavePct1 = reader.IsDBNull(reader.GetOrdinal("SAVEPCT1")) ? 0m : reader.GetDecimal(reader.GetOrdinal("SAVEPCT1")),
+                    Spend2 = reader.IsDBNull(reader.GetOrdinal("SPEND2")) ? null : reader.GetDecimal(reader.GetOrdinal("SPEND2")),
                     SavePct2 = reader.IsDBNull(reader.GetOrdinal("SAVEPCT2")) ? null : reader.GetDecimal(reader.GetOrdinal("SAVEPCT2")),
+                    Spend3 = reader.IsDBNull(reader.GetOrdinal("SPEND3")) ? null : reader.GetDecimal(reader.GetOrdinal("SPEND3")),
                     SavePct3 = reader.IsDBNull(reader.GetOrdinal("SAVEPCT3")) ? null : reader.GetDecimal(reader.GetOrdinal("SAVEPCT3")),
-                    AdvPriceGst = reader.IsDBNull(reader.GetOrdinal("ADVPRICEGST")) ? 0m : reader.GetDecimal(reader.GetOrdinal("ADVPRICEGST")),
                     IsRewards = !reader.IsDBNull(reader.GetOrdinal("ISREWARDS")) && reader.GetBoolean(reader.GetOrdinal("ISREWARDS"))
                 });
             }
