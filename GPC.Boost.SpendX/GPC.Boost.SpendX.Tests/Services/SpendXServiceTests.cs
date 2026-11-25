@@ -135,7 +135,7 @@ namespace GPC.Boost.SpendX.Tests.Services
             _repository.GetProductsByBrandsAsync(Arg.Any<List<string>>(), "AU", null)
                 .Returns(products);
 
-            _repository.SaveOrUpdateSpendXOfferAsync(Arg.Any<TEventOffer>(), Arg.Any<List<TEventOfferDetail>>(), Arg.Any<bool>(), Arg.Any<bool>())
+            _repository.SaveOrUpdateSpendXOfferAsync(Arg.Any<TEventOffer>(), Arg.Any<List<TEventOfferDetail>>(), Arg.Any<bool>())
                 .Returns((false, 0));
 
             // Act
@@ -170,7 +170,7 @@ namespace GPC.Boost.SpendX.Tests.Services
             _repository.GetProductsByBrandsAsync(Arg.Any<List<string>>(), "AU", null)
                 .Returns(products);
 
-            _repository.SaveOrUpdateSpendXOfferAsync(Arg.Any<TEventOffer>(), Arg.Any<List<TEventOfferDetail>>(), false, Arg.Any<bool>())
+            _repository.SaveOrUpdateSpendXOfferAsync(Arg.Any<TEventOffer>(), Arg.Any<List<TEventOfferDetail>>(), false)
                 .Returns((true, 501));
 
             // Act
@@ -217,7 +217,7 @@ namespace GPC.Boost.SpendX.Tests.Services
 
             _repository.GetOfferByIdAsync(501, 1).Returns(existingOffer);
 
-            _repository.SaveOrUpdateSpendXOfferAsync(Arg.Any<TEventOffer>(), Arg.Any<List<TEventOfferDetail>>(), true, Arg.Any<bool>())
+            _repository.SaveOrUpdateSpendXOfferAsync(Arg.Any<TEventOffer>(), Arg.Any<List<TEventOfferDetail>>(), true)
                 .Returns((true, 501));
 
             // Act

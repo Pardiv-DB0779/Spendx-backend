@@ -16,7 +16,7 @@ namespace GPC.Boost.SpendX.Repository
     public interface ISpendXRepository
     {
         Task<List<TProduct>> GetProductsByBrandsAsync(List<string> brands, string country, List<string>? itemClass4 = null);
-        Task<(bool Success, int OfferId)> SaveOrUpdateSpendXOfferAsync(TEventOffer offer, List<TEventOfferDetail> details, bool isUpdate, bool isReserved = false);
+        Task<(bool Success, int OfferId)> SaveOrUpdateSpendXOfferAsync(TEventOffer offer, List<TEventOfferDetail> details, bool isUpdate);
         Task<TEventOffer?> GetOfferByIdAsync(int offerId, int offerNo = 1);
         Task<TEventOffer?> GetOfferByPositionAsync(int eventId, int pageId, int positionId);
         Task<List<TEventOfferDetail>> GetOfferDetailsAsync(int offerId, int offerNo = 1);
@@ -65,7 +65,7 @@ namespace GPC.Boost.SpendX.Repository
             return await query.ToListAsync();
         }
 
-        public async Task<(bool Success, int OfferId)> SaveOrUpdateSpendXOfferAsync(TEventOffer offer, List<TEventOfferDetail> details, bool isUpdate, bool isReserved = false)
+        public async Task<(bool Success, int OfferId)> SaveOrUpdateSpendXOfferAsync(TEventOffer offer, List<TEventOfferDetail> details, bool isUpdate)
         {
             await using var tx = await _context.Database.BeginTransactionAsync();
             try
@@ -119,13 +119,9 @@ namespace GPC.Boost.SpendX.Repository
                         PositionId = offer.PagePosition,
                         EventId = offer.EventId,
                         Country = offer.Country,
-                        IsReserved = isReserved
+                        IsReserved = false
                     };
                     await _context.TMudMaps.AddAsync(mudMap);
-                }
-                else if (isReserved)
-                {
-                    mudMap.IsReserved = true;
                 }
 
                 SyncMudMapFromOffer(mudMap, offer);
