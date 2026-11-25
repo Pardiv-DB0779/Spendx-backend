@@ -75,7 +75,17 @@ namespace GPC.Boost.SpendX.Repository
                     _context.TEventOffers.Update(offer);
                     await _context.SaveChangesAsync();
 
-                    // Execute direct delete to avoid EF tracking collisions
+                    // Detach any previously tracked detail entities before bulk ExecuteDeleteAsync
+                    var trackedDetails = _context.ChangeTracker
+                        .Entries<TEventOfferDetail>()
+                        .Where(e => e.Entity.OfferId == offer.OfferId && e.Entity.OfferNo == offer.OfferNumber)
+                        .ToList();
+
+                    foreach (var entry in trackedDetails)
+                    {
+                        entry.State = EntityState.Detached;
+                    }
+
                     await _context.TEventOfferDetails
                         .Where(d => d.OfferId == offer.OfferId && d.OfferNo == offer.OfferNumber)
                         .ExecuteDeleteAsync();
@@ -125,7 +135,12 @@ namespace GPC.Boost.SpendX.Repository
                 // Recalculate detail lines and header rollups via stored procedure inside transaction
                 if (details != null && details.Any())
                 {
-                    await CalculateOfferDetailAndHeaderAsync(offer);
+                    var calcOk = await CalculateOfferDetailAndHeaderAsync(offer);
+                    if (!calcOk)
+                    {
+                        await tx.RollbackAsync();
+                        return (false, 0);
+                    }
                 }
 
                 await tx.CommitAsync();
@@ -200,19 +215,34 @@ namespace GPC.Boost.SpendX.Repository
                 var mudMap = await _context.TMudMaps
                     .FirstOrDefaultAsync(m => m.EventId == offer.EventId && m.PageId == offer.Page && m.PositionId == offer.PagePosition);
 
-                if (mudMap != null)
+                if (mudMap == null)
                 {
-                    if (isReserved.HasValue)
+                    mudMap = new TMudMap
                     {
-                        mudMap.IsReserved = isReserved.Value;
-                    }
-                    SyncMudMapFromOffer(mudMap, offer);
+                        PageId = offer.Page,
+                        PositionId = offer.PagePosition,
+                        EventId = offer.EventId,
+                        Country = offer.Country,
+                        IsReserved = isReserved ?? false
+                    };
+                    await _context.TMudMaps.AddAsync(mudMap);
                 }
+                else if (isReserved.HasValue)
+                {
+                    mudMap.IsReserved = isReserved.Value;
+                }
+
+                SyncMudMapFromOffer(mudMap, offer);
 
                 await _context.SaveChangesAsync();
 
                 // Recalculate detail lines and header financials via stored procedure inside transaction
-                await CalculateOfferDetailAndHeaderAsync(offer);
+                var calcOk = await CalculateOfferDetailAndHeaderAsync(offer);
+                if (!calcOk)
+                {
+                    await tx.RollbackAsync();
+                    return false;
+                }
 
                 await tx.CommitAsync();
                 return true;
@@ -406,7 +436,12 @@ namespace GPC.Boost.SpendX.Repository
                 await _context.SaveChangesAsync();
 
                 // Recalculate header rollups via SP inside the active transaction
-                await CalculateEventOfferHeaderAsync(offerId, offerNo, offerTypeId);
+                var calcOk = await CalculateEventOfferHeaderAsync(offerId, offerNo, offerTypeId);
+                if (!calcOk)
+                {
+                    await tx.RollbackAsync();
+                    return false;
+                }
 
                 await tx.CommitAsync();
                 return true;
@@ -536,10 +571,22 @@ namespace GPC.Boost.SpendX.Repository
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // 1. Check if an offer currently occupies the target position
+                // 1. Fetch & validate moving offer and its current source position
+                var movingOffer = await _context.TEventOffers
+                    .FirstOrDefaultAsync(o => o.EventId == request.EventId && o.OfferId == request.OfferId);
+
+                if (movingOffer == null || movingOffer.Page != request.SourcePageId || movingOffer.PagePosition != request.SourcePagePosition)
+                {
+                    _logger.LogWarning("MoveOffer validation failed: OfferId={OfferId} not found at Source Page={SourcePageId}, Position={SourcePos}",
+                        request.OfferId, request.SourcePageId, request.SourcePagePosition);
+                    await transaction.RollbackAsync();
+                    return false;
+                }
+
+                // 2. Check if an offer currently occupies the target position (displace to PagePosition = 0)
                 var existingTargetOffer = await _context.TEventOffers
-                    .FirstOrDefaultAsync(o => o.EventId == request.EventId 
-                                           && o.Page == request.TargetPageId 
+                    .FirstOrDefaultAsync(o => o.EventId == request.EventId
+                                           && o.Page == request.TargetPageId
                                            && o.PagePosition == request.TargetPagePosition);
 
                 if (existingTargetOffer != null && existingTargetOffer.OfferId != request.OfferId)
@@ -549,16 +596,9 @@ namespace GPC.Boost.SpendX.Repository
                     _context.TEventOffers.Update(existingTargetOffer);
                 }
 
-                // 2. Update moving offer header
-                var movingOffer = await _context.TEventOffers
-                    .FirstOrDefaultAsync(o => o.EventId == request.EventId && o.OfferId == request.OfferId);
-
-                if (movingOffer != null)
-                {
-                    movingOffer.Page = request.TargetPageId;
-                    movingOffer.PagePosition = request.TargetPagePosition;
-                    _context.TEventOffers.Update(movingOffer);
-                }
+                movingOffer.Page = request.TargetPageId;
+                movingOffer.PagePosition = request.TargetPagePosition;
+                _context.TEventOffers.Update(movingOffer);
 
                 // 3. Update tMudMap slots
                 var sourceMudMap = await _context.TMudMaps
@@ -613,12 +653,27 @@ namespace GPC.Boost.SpendX.Repository
                 if (existingTargetOffer != null && existingTargetOffer.OfferId != request.OfferId)
                 {
                     await _context.TEventOfferDetails
-                        .Where(d => d.OfferId == existingTargetOffer.OfferId)
+                        .Where(d => d.OfferId == existingTargetOffer.OfferId && d.OfferNo == existingTargetOffer.OfferNumber)
                         .ExecuteUpdateAsync(s => s.SetProperty(d => d.PagePosition, 0));
+
+                    var displacedHistories = await _context.TEventOfferSearchHistories
+                        .Where(h => h.EventId == request.EventId
+                                 && h.PageId == request.TargetPageId
+                                 && h.PositionId == request.TargetPagePosition
+                                 && h.EventOfferId == existingTargetOffer.OfferId)
+                        .ToListAsync();
+
+                    foreach (var dh in displacedHistories)
+                    {
+                        dh.PositionId = 0;
+                    }
                 }
 
+                int movingOfferId = movingOffer.OfferId;
+                int movingOfferNo = movingOffer.OfferNumber;
+
                 await _context.TEventOfferDetails
-                    .Where(d => d.OfferId == request.OfferId)
+                    .Where(d => d.OfferId == movingOfferId && d.OfferNo == movingOfferNo)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(d => d.Page, request.TargetPageId)
                         .SetProperty(d => d.PagePosition, request.TargetPagePosition));

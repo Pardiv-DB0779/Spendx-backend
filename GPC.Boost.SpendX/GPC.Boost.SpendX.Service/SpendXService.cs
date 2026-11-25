@@ -298,7 +298,7 @@ namespace GPC.Boost.SpendX.Service
                 var (repPartNo, storeSoh, dcSoh) = await _repository.GetOfferDetailSummaryAsync(offer.OfferId, offer.OfferNumber);
 
                 decimal gst = GetGstRate(offer.Country);
-                bool isTiered = offer.Spend2.HasValue && offer.Spend2.Value > 0;
+                bool isTiered = IsOfferTiered(offer);
 
                 response.OfferId = offer.OfferId;
                 response.OfferNo = offer.OfferNumber;
@@ -414,6 +414,23 @@ namespace GPC.Boost.SpendX.Service
                     return response;
                 }
 
+                if (request.Overview == null)
+                {
+                    response.Error = new ErrorDto { ErrorCode = "INVALID_REQUEST", Message = "Overview details are required." };
+                    return response;
+                }
+
+                bool isTiered = request.Overview.IsTiered ??
+                    ((request.Overview.Spend2.HasValue && request.Overview.Spend2.Value > 0) ||
+                     (request.Overview.Spend3.HasValue && request.Overview.Spend3.Value > 0));
+
+                var tierError = ValidateOverviewTiers(request.Overview, isTiered);
+                if (tierError != null)
+                {
+                    response.Error = tierError;
+                    return response;
+                }
+
                 var offer = await _repository.GetOfferByIdAsync(request.OfferId, request.OfferNo);
                 if (offer == null)
                 {
@@ -449,7 +466,6 @@ namespace GPC.Boost.SpendX.Service
                 offer.OfferName = offerName;
 
                 // Overview & Tiers (Respect IsTiered toggle: if false, clear Tiers 2 & 3)
-                bool isTiered = request.Overview.IsTiered ?? (request.Overview.Spend2.HasValue && request.Overview.Spend2.Value > 0);
                 offer.Spend1 = request.Overview.Spend1;
                 offer.SavePct1 = request.Overview.SavePct1;
                 if (isTiered)
@@ -591,7 +607,7 @@ namespace GPC.Boost.SpendX.Service
                 response.PageId = offer.Page;
                 response.PositionId = offer.PagePosition;
                 response.OfferTypeId = offer.OfferTypeId;
-                response.IsTiered = offer.Spend2.HasValue && offer.Spend2.Value > 0;
+                response.IsTiered = IsOfferTiered(offer);
                 response.Spend1 = offer.Spend1;
                 response.SavePct1 = offer.SavePct1;
                 response.Spend2 = offer.Spend2;
@@ -663,7 +679,12 @@ namespace GPC.Boost.SpendX.Service
                 }
 
                 // Atomically update details and recalculate header rollups in a single transaction
-                await _repository.SaveDataViewDetailsAndRecalculateHeaderAsync(currentDetails, request.OfferId, request.OfferNo, request.OfferTypeId);
+                bool saved = await _repository.SaveDataViewDetailsAndRecalculateHeaderAsync(currentDetails, request.OfferId, request.OfferNo, request.OfferTypeId);
+                if (!saved)
+                {
+                    response.Error = new ErrorDto { ErrorCode = "SAVE_FAILED", Message = "Failed to save data view details or recalculate header rollups." };
+                    return response;
+                }
 
                 var updatedOffer = await _repository.GetOfferByIdAsync(request.OfferId, request.OfferNo);
 
@@ -687,10 +708,20 @@ namespace GPC.Boost.SpendX.Service
 
         public async Task<MoveOfferResponseDto> MoveOfferAsync(MoveOfferRequestDto request)
         {
+            var response = new MoveOfferResponseDto();
+            if (request == null)
+            {
+                response.Error = new ErrorDto
+                {
+                    ErrorCode = "INVALID_REQUEST",
+                    Message = "Request payload cannot be null."
+                };
+                return response;
+            }
+
             _logger.LogInformation("Starting MoveOfferAsync for EventId={EventId}, OfferId={OfferId}, from Page={SourcePageId} Pos={SourcePos} to Page={TargetPageId} Pos={TargetPos}",
                 request.EventId, request.OfferId, request.SourcePageId, request.SourcePagePosition, request.TargetPageId, request.TargetPagePosition);
 
-            var response = new MoveOfferResponseDto();
             try
             {
                 var offer = await _repository.GetOfferByIdAsync(request.OfferId);
@@ -764,6 +795,60 @@ namespace GPC.Boost.SpendX.Service
         private static decimal GetGstRate(string? country)
         {
             return string.Equals(country, "NZ", StringComparison.OrdinalIgnoreCase) ? 0.15m : 0.10m;
+        }
+
+        private static bool IsOfferTiered(TEventOffer offer)
+        {
+            return (offer.Spend2.HasValue && offer.Spend2.Value > 0) ||
+                   (offer.Spend3.HasValue && offer.Spend3.Value > 0);
+        }
+
+        private static ErrorDto? ValidateOverviewTiers(SpendXOverviewDto overview, bool isTiered)
+        {
+            if (overview.Spend1 <= 0)
+            {
+                return new ErrorDto { ErrorCode = "INVALID_TIER", Message = "Tier 1 Spend threshold must be greater than zero." };
+            }
+            if (overview.SavePct1 <= 0 || overview.SavePct1 > 100)
+            {
+                return new ErrorDto { ErrorCode = "INVALID_TIER", Message = "Tier 1 Discount Percentage must be between 0 and 100." };
+            }
+
+            if (!isTiered)
+            {
+                return null;
+            }
+
+            if (!overview.Spend2.HasValue || !overview.SavePct2.HasValue)
+            {
+                return new ErrorDto { ErrorCode = "INVALID_TIER", Message = "Tier 2 Spend and Discount Percentage are required." };
+            }
+            if (overview.Spend2.Value <= 0 || overview.Spend2.Value <= overview.Spend1)
+            {
+                return new ErrorDto { ErrorCode = "INVALID_TIER", Message = "Tier 2 Spend must be greater than Tier 1 Spend." };
+            }
+            if (overview.SavePct2.Value <= 0 || overview.SavePct2.Value > 100 || overview.SavePct2.Value <= overview.SavePct1)
+            {
+                return new ErrorDto { ErrorCode = "INVALID_TIER", Message = "Tier 2 Discount Percentage must be between 0 and 100 and greater than Tier 1." };
+            }
+
+            if (overview.Spend3.HasValue != overview.SavePct3.HasValue)
+            {
+                return new ErrorDto { ErrorCode = "INVALID_TIER", Message = "Tier 3 Spend and Discount Percentage must be provided together." };
+            }
+            if (overview.Spend3.HasValue && overview.SavePct3.HasValue)
+            {
+                if (overview.Spend3.Value <= 0 || overview.Spend3.Value <= overview.Spend2.Value)
+                {
+                    return new ErrorDto { ErrorCode = "INVALID_TIER", Message = "Tier 3 Spend must be greater than Tier 2 Spend." };
+                }
+                if (overview.SavePct3.Value <= 0 || overview.SavePct3.Value > 100 || overview.SavePct3.Value <= overview.SavePct2.Value)
+                {
+                    return new ErrorDto { ErrorCode = "INVALID_TIER", Message = "Tier 3 Discount Percentage must be between 0 and 100 and greater than Tier 2." };
+                }
+            }
+
+            return null;
         }
     }
 }
